@@ -107,3 +107,104 @@ def record_press_to_speak(output_path: Optional[Path] = None) -> Path:
     return destination
 
 
+class ContinuousRecorder:
+    """
+    Programmatic audio recorder that can be started and stopped via API calls.
+    """
+
+    def __init__(self, *, sample_rate: int = SAMPLE_RATE, channels: int = CHANNELS):
+        self._sample_rate = sample_rate
+        self._channels = channels
+        self._data_queue: "queue.Queue[np.ndarray]" | None = None
+        self._stop_event = threading.Event()
+        self._writer: threading.Thread | None = None
+        self._stream: sd.InputStream | None = None
+        self._destination: Path | None = None
+        self._lock = threading.Lock()
+
+    def start(self, output_path: Optional[Path] = None) -> Path:
+        """
+        Start capturing audio until stop() is invoked. Returns the output path.
+        """
+        with self._lock:
+            if self._stream is not None:
+                raise RuntimeError("Recording already in progress")
+
+            self._destination = self._resolve_destination(output_path)
+            self._data_queue = queue.Queue()
+            self._stop_event.clear()
+
+            self._writer = threading.Thread(
+                target=_writer_thread,
+                args=(self._destination, self._data_queue, self._stop_event),
+                daemon=True,
+            )
+            self._writer.start()
+
+            def callback(indata, frames, time_info, status):  # type: ignore[no-untyped-def]
+                if status:
+                    print(f"Audio warning: {status}")
+                if self._data_queue is not None:
+                    self._data_queue.put(indata.copy())
+
+            try:
+                self._stream = sd.InputStream(
+                    samplerate=self._sample_rate,
+                    channels=self._channels,
+                    dtype="float32",
+                    callback=callback,
+                )
+                self._stream.start()
+            except Exception:
+                self._stop_event.set()
+                if self._writer:
+                    self._writer.join()
+                self._cleanup_failed_start()
+                raise
+
+            return self._destination
+
+    def stop(self) -> Path:
+        """
+        Stop the recording and return the path to the captured WAV file.
+        """
+        with self._lock:
+            if self._stream is None or self._destination is None:
+                raise RuntimeError("No recording in progress")
+
+            self._stream.stop()
+            self._stream.close()
+            self._stream = None
+
+        self._stop_event.set()
+        if self._writer:
+            self._writer.join()
+        self._writer = None
+        self._data_queue = None
+        destination = self._destination
+        self._destination = None
+        return destination
+
+    def is_recording(self) -> bool:
+        return self._stream is not None
+
+    def _resolve_destination(self, output_path: Optional[Path]) -> Path:
+        if output_path is not None:
+            return output_path
+        temp_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        destination = Path(temp_file.name)
+        temp_file.close()
+        return destination
+
+    def _cleanup_failed_start(self) -> None:
+        if self._destination:
+            try:
+                self._destination.unlink(missing_ok=True)
+            except Exception:
+                pass
+        self._destination = None
+        self._data_queue = None
+        self._writer = None
+        self._stream = None
+        self._stop_event.set()
+
