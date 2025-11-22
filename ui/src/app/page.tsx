@@ -118,22 +118,31 @@ export default function Home() {
   }, [mockMode, showPanelWithUrl]);
 
   const [panelWasVisibleBeforeSettings, setPanelWasVisibleBeforeSettings] = useState(false);
+  const [panelFallbackActive, setPanelFallbackActive] = useState(false);
 
   const handleSettingsVisibilityChange = useCallback(
     async (open: boolean) => {
       if (open) {
-        if (panelVisible) {
+        if (panelVisible && isElectron) {
           setPanelWasVisibleBeforeSettings(true);
+          // Hide BrowserView but keep layout and show fallback iframe.
           await togglePanelVisibility();
+          setPanelVisible(true);
+          setPanelFallbackActive(true);
         } else {
           setPanelWasVisibleBeforeSettings(false);
         }
-      } else if (panelWasVisibleBeforeSettings) {
-        await togglePanelVisibility();
+      } else {
+        if (panelFallbackActive) {
+          setPanelFallbackActive(false);
+          if (panelWasVisibleBeforeSettings) {
+            await togglePanelVisibility();
+          }
+        }
         setPanelWasVisibleBeforeSettings(false);
       }
     },
-    [panelVisible, panelWasVisibleBeforeSettings, togglePanelVisibility]
+    [isElectron, panelFallbackActive, panelVisible, panelWasVisibleBeforeSettings, togglePanelVisibility]
   );
 
   const startResize = (event: React.MouseEvent<HTMLDivElement>) => {
@@ -206,7 +215,7 @@ export default function Home() {
   >
         {dockSide === 'left' && panelVisible && (
           <>
-            {!isElectron ? (
+            {!isElectron || panelFallbackActive ? (
               <WebPanel
                 url={panelUrl}
                 onClose={() => setPanelVisible(false)}
@@ -241,7 +250,7 @@ export default function Home() {
               title="Drag to resize panel"
             />
 
-            {!isElectron ? (
+            {!isElectron || panelFallbackActive ? (
               <WebPanel
                 url={panelUrl}
                 onClose={() => setPanelVisible(false)}
