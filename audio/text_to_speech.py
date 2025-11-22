@@ -3,7 +3,7 @@ import os
 from typing import Optional
 
 from dotenv import load_dotenv
-from elevenlabs import save  # optional, for saving to file
+from elevenlabs import save, stream  # optional, for saving to file
 from elevenlabs.client import ElevenLabs
 from elevenlabs.play import play
 
@@ -34,7 +34,7 @@ async def tts_async(
     """
 
     def _sync_call():
-        audio = client.text_to_speech.convert(
+        audio = client.text_to_speech.stream(
             voice_id=voice_id,
             model_id=model_id,
             text=text,
@@ -45,7 +45,7 @@ async def tts_async(
             # save() works with bytes or streaming responses
             save(audio, output_path)
 
-        return play(audio)
+        return stream(audio)
 
     return await asyncio.to_thread(_sync_call)
 
