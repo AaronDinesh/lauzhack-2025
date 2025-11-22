@@ -178,10 +178,10 @@ export default function Home() {
         ref={workspaceRef}
         style={{
       gridTemplateColumns: panelVisible
-        ? dockSide === 'left'
-          ? `calc(${100 - workspaceSplit}% - ${HANDLE_WIDTH}px) ${HANDLE_WIDTH}px ${workspaceSplit}%`
-          : `${workspaceSplit}% ${HANDLE_WIDTH}px calc(${100 - workspaceSplit}% - ${HANDLE_WIDTH}px)`
-        : '100%',
+            ? dockSide === 'left'
+              ? `calc(${100 - workspaceSplit}% - ${HANDLE_WIDTH}px) ${HANDLE_WIDTH}px ${workspaceSplit}%`
+              : `${workspaceSplit}% ${HANDLE_WIDTH}px calc(${100 - workspaceSplit}% - ${HANDLE_WIDTH}px)`
+            : '100%',
     }}
   >
         {dockSide === 'left' && panelVisible && (
@@ -190,7 +190,7 @@ export default function Home() {
               <WebPanel
                 url={panelUrl}
                 onClose={() => setPanelVisible(false)}
-                width={100 - workspaceSplit}
+                width={100}
               />
             ) : (
               <div
@@ -209,9 +209,7 @@ export default function Home() {
         )}
 
         <div className="min-w-0">
-          <CameraView
-            width={panelVisible ? workspaceSplit : 100}
-          />
+          <CameraView width={100} />
         </div>
 
         {dockSide === 'right' && panelVisible && (
@@ -227,7 +225,7 @@ export default function Home() {
               <WebPanel
                 url={panelUrl}
                 onClose={() => setPanelVisible(false)}
-                width={100 - workspaceSplit}
+                width={100}
               />
             ) : (
               <div
