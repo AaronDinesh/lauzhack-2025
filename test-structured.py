@@ -15,7 +15,7 @@ load_dotenv()
 class Sam3Input(BaseModel):
     target_element: str = Field(..., description="The element to segment in the image.")
     synonyms: List[str] = Field(
-        ..., min_items=0, max_items=5, description="Alternate words for the target element."
+        ..., description="Alternate words for the target element."
     )
 
 
@@ -33,8 +33,6 @@ class ToolInput(BaseModel):
     synonyms: Optional[List[str]] = Field(
         None,
         description="SAM3 synonyms.",
-        min_items=0,
-        max_items=5,
     )
     query: Optional[str] = Field(
         None,
@@ -44,7 +42,7 @@ class ToolInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 class ToolCall(BaseModel):
-    tool: Literal["sam3", "search_online"]
+    tool: Literal["segmentation", "search_online"]
     rationale: str = Field(..., description="The rationale for calling the tool.")
     input: ToolInput = Field(..., description="Tool-specific arguments.")
 
@@ -52,7 +50,7 @@ class ToolCall(BaseModel):
     def validate_input_payload(self) -> "ToolCall":
         """Keep the JSON schema simple while still validating locally."""
         payload = self.input.model_dump(exclude_none=True)
-        if self.tool == "sam3":
+        if self.tool == "segmentation":
             self.input = Sam3Input.model_validate(payload).model_dump()
         elif self.tool == "search_online":
             self.input = SearchOnlineInput.model_validate(payload).model_dump()
@@ -65,7 +63,7 @@ class AssistantPlan(BaseModel):
     )
     tool_calls: List[ToolCall] = Field(
         default_factory=list,
-        description="Zero or more tool invocations to launch immediately.",
+        description="Zero or more tool invocations to launch immediately. Decide which tool to use based on the task at hand.",
     )
 
 def _encode_image(path: Path) -> str:
@@ -102,7 +100,7 @@ def run_validation() -> None:
                     {
                         "type": "input_text",
                         "text": (
-                            "Describe what you see on the desk. Where are the numbers in my keyboard."
+                            "Describe what you see on the desk. This is a segmentation task. Identify the numbers in my keyboard."
                         ),
                     },
                     {
