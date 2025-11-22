@@ -1,19 +1,24 @@
-import asyncio
 from threading import Lock
 from typing import Any, Tuple
 from pathlib import Path
 
+import asyncio
 import torch
 from PIL import Image
+from fastapi import FastAPI
+from pydantic import BaseModel
 
 from sam3.model_builder import build_sam3_image_model
 from sam3.model.sam3_image_processor import Sam3Processor
-from sam3.visualization_utils import save_masklet_image, plot_results  # <-- use this
+from sam3.visualization_utils import plot_results  # must support out_path=...
 
+
+# ----------------------------------------------------------------------
+# Model & processor: load ONCE at import time
+# ----------------------------------------------------------------------
 
 # Root of your sam3 repo (adapt this if your layout is different)
 sam3_root = Path(__file__).resolve().parents[1] / "sam3"
-
 bpe_path = sam3_root / "assets" / "bpe_simple_vocab_16e6.txt.gz"
 
 # Choose device
@@ -32,15 +37,15 @@ _model_lock = Lock()
 
 
 # ----------------------------------------------------------------------
-# Async inference function
+# Core async inference helper (internal)
 # ----------------------------------------------------------------------
- 
+
 async def sam3_infer_image(
     image_path: str,
     prompt: str,
     *,
     do_plot: bool = False,
-) -> Tuple[Any, Any, Any]:
+) -> Tuple[Any, Any, Any, str | None]:
     """
     Async wrapper around SAM3 image model.
 
@@ -53,7 +58,7 @@ async def sam3_infer_image(
         * optional plot_results that SAVES the image
 
     Returns:
-        masks, boxes, scores
+        masks, boxes, scores, overlay_path
     """
 
     def _sync_infer():
@@ -73,42 +78,67 @@ async def sam3_infer_image(
                 prompt=prompt,
             )
 
+            overlay_path: str | None = None
+
             # Optional visualization: save overlay image to disk
             if do_plot:
-                # e.g. "test_image_masklet_overlay.png"
                 out_path = Path(image_path).with_name(
                     Path(image_path).stem + "_masklet_overlay.png"
                 )
                 # plot_results should have signature: plot_results(img, results, out_path=None)
                 plot_results(image, inference_state, out_path=str(out_path))
-                print(f"Saved overlay to {out_path}")
+                overlay_path = str(out_path)
 
             # Assuming the inference_state carries these keys
             masks = inference_state["masks"]
             boxes = inference_state["boxes"]
             scores = inference_state["scores"]
 
-            return masks, boxes, scores
+            return masks, boxes, scores, overlay_path
 
     return await asyncio.to_thread(_sync_infer)
 
 
-
 # ----------------------------------------------------------------------
-# Example usage
+# FastAPI app
 # ----------------------------------------------------------------------
 
-async def main():
-    test_image = sam3_root / "assets" / "images" / "computer.jpeg"
-    masks, boxes, scores = await sam3_infer_image(
-        image_path=str(test_image),
-        prompt="the ram slots next to the cpu",
-        do_plot=True,
+app = FastAPI(title="SAM3 Image Inference API")
+
+
+class InferenceRequest(BaseModel):
+    image_path: str  # path on the server where the image is located
+    prompt: str
+    do_plot: bool = False
+
+
+class InferenceResponse(BaseModel):
+    num_objects: int
+    boxes: list[list[float]]
+    scores: list[float]
+    overlay_path: str | None = None
+
+
+@app.post("/infer", response_model=InferenceResponse)
+async def infer(req: InferenceRequest):
+    """
+    Run SAM3 on a given image_path + prompt.
+
+    The model is loaded once globally and reused across calls.
+    """
+    masks, boxes, scores, overlay_path = await sam3_infer_image(
+        image_path=req.image_path,
+        prompt=req.prompt,
+        do_plot=req.do_plot,
     )
-    print("Masks:", type(masks))
-    print("Boxes:", boxes)
-    print("Scores:", scores)
 
+    # Convert tensors to plain Python lists for JSON
+    boxes_list = boxes.detach().cpu().tolist()
+    scores_list = scores.detach().cpu().tolist()
 
-if __name__ == "__main__":
-    asyncio.run(main())
+    return InferenceResponse(
+        num_objects=len(scores_list),
+        boxes=boxes_list,
+        scores=scores_list,
+        overlay_path=overlay_path,
+    )
