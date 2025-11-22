@@ -1,3 +1,6 @@
+# sam
+*.safetensors
+
 # audio files
 *.mp3
 *.m4a
