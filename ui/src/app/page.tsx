@@ -107,6 +107,7 @@ export default function Home() {
         onMockSetUrl={handleMockSetUrl}
         onPanelUrlChange={setPanelUrl}
         onTogglePanel={togglePanelVisibility}
+        onSearchPanel={showPanelWithUrl}
       />
 
       {/* Main Content Area */}

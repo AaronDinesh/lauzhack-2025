@@ -14,6 +14,7 @@ interface ControlBarProps {
   onMockSetUrl: () => void;
   onPanelUrlChange: (url: string) => void;
   onTogglePanel: (url?: string) => void;
+  onSearchPanel: (url: string) => void;
 }
 
 export default function ControlBar({
@@ -28,6 +29,7 @@ export default function ControlBar({
   onMockSetUrl,
   onPanelUrlChange,
   onTogglePanel,
+  onSearchPanel,
 }: ControlBarProps) {
   const [showSettings, setShowSettings] = useState(false);
   const [endpointInput, setEndpointInput] = useState(bridgeEndpoint);
@@ -91,6 +93,15 @@ export default function ControlBar({
           placeholder="https://example.com"
           className="w-64 px-3 py-1 bg-gray-900 border border-gray-700 rounded focus:outline-none focus:ring-2 focus:ring-primary text-sm"
         />
+        <button
+          onClick={() => {
+            onPanelUrlChange(panelUrlInput);
+            onSearchPanel(panelUrlInput);
+          }}
+          className="px-3 py-1 text-sm bg-gray-700 hover:bg-gray-600 rounded transition-colors"
+        >
+          Search
+        </button>
         <button
           onClick={() => {
             onPanelUrlChange(panelUrlInput);
