@@ -39,12 +39,14 @@ function createWindow() {
   panelView.setAutoResize({ width: true, height: true });
 
   let panelVisible = false;
+  let panelAttached = false;
   let lastPanelUrl = defaultPanelUrl;
   let panelSplit = 0.4; // fraction of window width reserved for panel
   let controlBarOffset = 0; // pixels to offset panel from top (height of control bar)
   let panelInitialized = false;
 
   const updatePanelBounds = () => {
+    if (!panelAttached) return;
     const [width, height] = mainWindow.getContentSize();
     // Dock the panel on the right; leave room for the main content and handle.
     const cameraFraction = 1 - panelSplit;
@@ -93,6 +95,7 @@ function createWindow() {
     }
 
     mainWindow.setBrowserView(panelView);
+    panelAttached = true;
     updatePanelBounds();
     panelVisible = true;
     return true;
@@ -152,6 +155,41 @@ function createWindow() {
       updatePanelBounds();
     }
     return { panelSplit, controlBarOffset };
+  });
+
+  ipcMain.handle('panel:detach', async () => {
+    if (panelAttached) {
+      try {
+        mainWindow.removeBrowserView(panelView);
+      } catch (e) {
+        // ignore
+      }
+      panelAttached = false;
+    }
+    return { panelVisible, panelAttached };
+  });
+
+  ipcMain.handle('panel:attach', async () => {
+    if (!panelVisible || panelAttached) {
+      return { panelVisible, panelAttached };
+    }
+    mainWindow.setBrowserView(panelView);
+    panelAttached = true;
+    updatePanelBounds();
+    return { panelVisible, panelAttached };
+  });
+
+  ipcMain.handle('panel:capture', async () => {
+    if (!panelVisible || !panelAttached || panelView.webContents.isDestroyed()) {
+      return null;
+    }
+    try {
+      const image = await panelView.webContents.capturePage();
+      return image.toDataURL();
+    } catch (err) {
+      console.error('Failed to capture panel', err);
+      return null;
+    }
   });
 
   mainWindow.on('resize', () => {

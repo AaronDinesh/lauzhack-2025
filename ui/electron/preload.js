@@ -5,4 +5,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   loadPanel: (url) => ipcRenderer.invoke('panel:load', url),
   resizePanel: (fraction, topOffset) =>
     ipcRenderer.invoke('panel:resize', { fraction, topOffset }),
+  detachPanel: () => ipcRenderer.invoke('panel:detach'),
+  attachPanel: () => ipcRenderer.invoke('panel:attach'),
+  capturePanel: () => ipcRenderer.invoke('panel:capture'),
 });

@@ -119,30 +119,32 @@ export default function Home() {
 
   const [panelWasVisibleBeforeSettings, setPanelWasVisibleBeforeSettings] = useState(false);
   const [panelFallbackActive, setPanelFallbackActive] = useState(false);
+  const [panelSnapshot, setPanelSnapshot] = useState<string | null>(null);
 
   const handleSettingsVisibilityChange = useCallback(
     async (open: boolean) => {
       if (open) {
-        if (panelVisible && isElectron) {
+        if (panelVisible && isElectron && window.electronAPI) {
           setPanelWasVisibleBeforeSettings(true);
-          // Hide BrowserView but keep layout and show fallback iframe.
-          await togglePanelVisibility();
-          setPanelVisible(true);
+          const snapshot = await window.electronAPI.capturePanel();
+          if (snapshot) {
+            setPanelSnapshot(snapshot);
+          }
+          await window.electronAPI.detachPanel();
           setPanelFallbackActive(true);
         } else {
           setPanelWasVisibleBeforeSettings(false);
         }
       } else {
-        if (panelFallbackActive) {
+        if (panelFallbackActive && window.electronAPI) {
+          await window.electronAPI.attachPanel();
           setPanelFallbackActive(false);
-          if (panelWasVisibleBeforeSettings) {
-            await togglePanelVisibility();
-          }
+          setPanelSnapshot(null);
         }
         setPanelWasVisibleBeforeSettings(false);
       }
     },
-    [isElectron, panelFallbackActive, panelVisible, panelWasVisibleBeforeSettings, togglePanelVisibility]
+    [isElectron, panelFallbackActive, panelVisible, panelWasVisibleBeforeSettings]
   );
 
   const startResize = (event: React.MouseEvent<HTMLDivElement>) => {
@@ -216,11 +218,15 @@ export default function Home() {
         {dockSide === 'left' && panelVisible && (
           <>
             {!isElectron || panelFallbackActive ? (
-              <WebPanel
-                url={panelUrl}
-                onClose={() => setPanelVisible(false)}
-                width={100}
-              />
+              panelSnapshot ? (
+                <img src={panelSnapshot} alt="Panel snapshot" className="w-full h-full object-cover" />
+              ) : (
+                <WebPanel
+                  url={panelUrl}
+                  onClose={() => setPanelVisible(false)}
+                  width={100}
+                />
+              )
             ) : (
               <div
                 className="bg-dark border-r border-gray-800"
@@ -251,11 +257,15 @@ export default function Home() {
             />
 
             {!isElectron || panelFallbackActive ? (
-              <WebPanel
-                url={panelUrl}
-                onClose={() => setPanelVisible(false)}
-                width={100}
-              />
+              panelSnapshot ? (
+                <img src={panelSnapshot} alt="Panel snapshot" className="w-full h-full object-cover" />
+              ) : (
+                <WebPanel
+                  url={panelUrl}
+                  onClose={() => setPanelVisible(false)}
+                  width={100}
+                />
+              )
             ) : (
               <div
                 className="bg-dark border-l border-gray-800"
