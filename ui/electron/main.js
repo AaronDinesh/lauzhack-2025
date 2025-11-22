@@ -91,7 +91,8 @@ function createWindow() {
   };
 
   const hidePanel = () => {
-    if (panelVisible && panelView.isDestroyed()) {
+    const destroyed = panelView.webContents.isDestroyed();
+    if (panelVisible && destroyed) {
       panelVisible = false;
       return;
     }
