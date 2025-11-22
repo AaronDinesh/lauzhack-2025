@@ -10,6 +10,7 @@ const sanitizeUrl = (url) => {
 
 const defaultPanelUrl = sanitizeUrl(process.env.PANEL_URL) || 'https://example.com';
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+const PANEL_HANDLE_WIDTH = 8; // keep in sync with renderer
 
 function createWindow() {
   const mainWindow = new BrowserWindow({
@@ -35,6 +36,7 @@ function createWindow() {
       webSecurity: true,
     },
   });
+  panelView.setAutoResize({ width: true, height: true });
 
   let panelVisible = false;
   let lastPanelUrl = defaultPanelUrl;
@@ -44,7 +46,8 @@ function createWindow() {
   const updatePanelBounds = () => {
     const [width, height] = mainWindow.getContentSize();
     // Dock the panel on the right; leave room for the main content.
-    const panelWidth = Math.floor(width * panelSplit);
+    const availableWidth = Math.max(0, width - PANEL_HANDLE_WIDTH);
+    const panelWidth = Math.floor(availableWidth * panelSplit);
     const offsetY = Math.max(0, Math.floor(controlBarOffset));
     const effectiveHeight = Math.max(0, height - offsetY);
     panelView.setBounds({

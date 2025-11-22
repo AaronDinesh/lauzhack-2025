@@ -27,6 +27,7 @@ export default function Home() {
   const [workspaceSplit, setWorkspaceSplit] = useState(70); // percentage for camera
   const workspaceRef = useRef<HTMLDivElement>(null);
   const controlBarRef = useRef<HTMLDivElement>(null);
+  const HANDLE_WIDTH = 8; // px
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -172,40 +173,65 @@ export default function Home() {
       />
 
       {/* Main Content Area */}
-      <div className="flex flex-1 overflow-hidden" ref={workspaceRef}>
-        {dockSide === 'left' && panelVisible && !isElectron && (
-          <WebPanel
-            url={panelUrl}
-            onClose={() => setPanelVisible(false)}
-            width={100 - workspaceSplit}
-          />
-        )}
-
-        <CameraView
-          width={panelVisible ? workspaceSplit : 100}
-        />
-
-        {panelVisible && (
+      <div
+        className="grid flex-1 overflow-hidden"
+        ref={workspaceRef}
+        style={{
+          gridTemplateColumns: panelVisible
+            ? dockSide === 'left'
+              ? `${100 - workspaceSplit}% ${HANDLE_WIDTH}px ${workspaceSplit}%`
+              : `${workspaceSplit}% ${HANDLE_WIDTH}px ${100 - workspaceSplit}%`
+            : '100%',
+        }}
+      >
+        {dockSide === 'left' && panelVisible && (
           <>
-            {/* Drag handle */}
-            <div
-              onMouseDown={startResize}
-              className="w-2 cursor-col-resize bg-gray-800 hover:bg-gray-700 transition-colors"
-              title="Drag to resize panel"
-            />
-
-            {dockSide === 'right' && !isElectron && (
+            {!isElectron ? (
               <WebPanel
                 url={panelUrl}
                 onClose={() => setPanelVisible(false)}
                 width={100 - workspaceSplit}
               />
+            ) : (
+              <div
+                className="bg-dark border-r border-gray-800"
+                title="External panel (Electron)"
+              />
             )}
 
-            {dockSide === 'right' && isElectron && (
+            <div
+              onMouseDown={startResize}
+              className="cursor-col-resize bg-gray-800 hover:bg-gray-700 transition-colors"
+              style={{ width: HANDLE_WIDTH }}
+              title="Drag to resize panel"
+            />
+          </>
+        )}
+
+        <div className="min-w-0">
+          <CameraView
+            width={panelVisible ? workspaceSplit : 100}
+          />
+        </div>
+
+        {dockSide === 'right' && panelVisible && (
+          <>
+            <div
+              onMouseDown={startResize}
+              className="cursor-col-resize bg-gray-800 hover:bg-gray-700 transition-colors"
+              style={{ width: HANDLE_WIDTH }}
+              title="Drag to resize panel"
+            />
+
+            {!isElectron ? (
+              <WebPanel
+                url={panelUrl}
+                onClose={() => setPanelVisible(false)}
+                width={100 - workspaceSplit}
+              />
+            ) : (
               <div
                 className="bg-dark border-l border-gray-800"
-                style={{ width: `${100 - workspaceSplit}%` }}
                 title="External panel (Electron)"
               />
             )}
