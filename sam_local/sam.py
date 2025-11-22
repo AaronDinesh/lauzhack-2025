@@ -5,8 +5,15 @@ from pathlib import Path
 import asyncio
 import torch
 from PIL import Image
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+import os
+
+import base64
+import io
+import uuid
+from pathlib import Path
+from PIL import Image
 
 from sam3.model_builder import build_sam3_image_model
 from sam3.model.sam3_image_processor import Sam3Processor
@@ -41,31 +48,48 @@ _model_lock = Lock()
 # ----------------------------------------------------------------------
 
 async def sam3_infer_image(
-    image_path: str,
     prompt: str,
+    image_path: str | None = None,
+    base64_image: str | None = None,
     *,
     do_plot: bool = False,
+    output_dir: str = "agent_output" # Default folder for base64 outputs
 ) -> Tuple[Any, Any, Any, str | None]:
-    """
-    Async wrapper around SAM3 image model.
-
-    - Keeps the model and processor loaded globally in memory.
-    - Runs the heavy inference work in a background thread (asyncio.to_thread).
-    - Uses the same logic as your sync example:
-        * set_image
-        * reset_all_prompts
-        * set_text_prompt
-        * optional plot_results that SAVES the image
-
-    Returns:
-        masks, boxes, scores, overlay_path
-    """
+    
+    # Create output directory if it doesn't exist
+    if do_plot:
+        os.makedirs(output_dir, exist_ok=True)
 
     def _sync_infer():
         with _model_lock:
-            # Load image
-            image = Image.open(image_path).convert("RGB")
+            # -------------------------------------------------
+            # 1. Load Image (Base64 OR File Path)
+            # -------------------------------------------------
+            if base64_image:
+                # Remove header if present (e.g., "data:image/jpeg;base64,")
+                if "," in base64_image:
+                    header, encoded = base64_image.split(",", 1)
+                else:
+                    encoded = base64_image
+                
+                image_data = base64.b64decode(encoded)
+                image = Image.open(io.BytesIO(image_data)).convert("RGB")
+                
+                # Generate a unique name for the output file since we don't have a path
+                input_stem = f"upload_{uuid.uuid4().hex[:8]}"
+                save_dir = Path(output_dir)
+                
+            elif image_path:
+                image = Image.open(image_path).convert("RGB")
+                input_stem = Path(image_path).stem
+                # Save to same directory as input image, or use default
+                save_dir = Path(image_path).parent
+            else:
+                raise ValueError("Either image_path or base64_image must be provided.")
 
+            # -------------------------------------------------
+            # 2. Standard SAM 3 Inference
+            # -------------------------------------------------
             # Set the image in the processor
             inference_state = _processor.set_image(image)
 
@@ -80,16 +104,22 @@ async def sam3_infer_image(
 
             overlay_path: str | None = None
 
-            # Optional visualization: save overlay image to disk
+            # -------------------------------------------------
+            # 3. Visualization / Saving
+            # -------------------------------------------------
             if do_plot:
-                out_path = Path(image_path).with_name(
-                    Path(image_path).stem + "_masklet_overlay.png"
-                )
-                # plot_results should have signature: plot_results(img, results, out_path=None)
+                # Construct output path
+                filename = f"{input_stem}_masklet_overlay.png"
+                out_path = save_dir / filename
+                
+                # Ensure the directory exists (in case of file path parent)
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+
+                # plot_results(img, results, out_path=None)
                 plot_results(image, inference_state, out_path=str(out_path))
                 overlay_path = str(out_path)
 
-            # Assuming the inference_state carries these keys
+            # Extract results
             masks = inference_state["masks"]
             boxes = inference_state["boxes"]
             scores = inference_state["scores"]
@@ -119,26 +149,38 @@ class InferenceResponse(BaseModel):
     overlay_path: str | None = None
 
 
+class InferenceRequest(BaseModel):
+    prompt: str
+    image_path: str | None = None
+    base64_image: str | None = None  # Add this field
+    do_plot: bool = False
+
 @app.post("/infer", response_model=InferenceResponse)
 async def infer(req: InferenceRequest):
-    """
-    Run SAM3 on a given image_path + prompt.
+    
+    # Validation: Ensure at least one source is provided
+    if not req.image_path and not req.base64_image:
+        raise HTTPException(status_code=400, detail="Provide either 'image_path' or 'base64_image'")
 
-    The model is loaded once globally and reused across calls.
-    """
-    masks, boxes, scores, overlay_path = await sam3_infer_image(
-        image_path=req.image_path,
-        prompt=req.prompt,
-        do_plot=req.do_plot,
-    )
+    try:
+        masks, boxes, scores, overlay_path = await sam3_infer_image(
+            prompt=req.prompt,
+            image_path=req.image_path,
+            base64_image=req.base64_image,
+            do_plot=req.do_plot,
+        )
 
-    # Convert tensors to plain Python lists for JSON
-    boxes_list = boxes.detach().cpu().tolist()
-    scores_list = scores.detach().cpu().tolist()
+        # Convert tensors to lists
+        boxes_list = boxes.detach().cpu().tolist()
+        scores_list = scores.detach().cpu().tolist()
 
-    return InferenceResponse(
-        num_objects=len(scores_list),
-        boxes=boxes_list,
-        scores=scores_list,
-        overlay_path=overlay_path,
-    )
+        return InferenceResponse(
+            num_objects=len(scores_list),
+            boxes=boxes_list,
+            scores=scores_list,
+            overlay_path=overlay_path,
+        )
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
