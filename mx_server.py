@@ -12,7 +12,7 @@ from openai import OpenAI
 
 from audio.recorder import ContinuousRecorder
 from audio.speech_to_text import transcribe_file_sync
-from audio.text_to_speech import speak_text
+from audio.text_to_speech import speak_text, stop_speech
 from camera.helpers import FrameCache, capture_with_context
 
 load_dotenv()
@@ -62,6 +62,8 @@ if SYSTEM_PROMPT:
     )
 
 frame_cache: FrameCache | None = None
+_tts_thread_lock = threading.Lock()
+_active_tts_thread: threading.Thread | None = None
 
 
 def _extract_first_text(response_dict: Dict[str, Any]) -> str:
@@ -117,6 +119,34 @@ def _stream_assistant_text(
             response_dict = final_response.to_dict()  # type: ignore[assignment]
 
     return _extract_first_text(response_dict)
+
+
+def _play_response_async(text: str) -> None:
+    """Spawn a background thread for TTS so the endpoint can return immediately."""
+    global _active_tts_thread
+
+    def _tts_worker() -> None:
+        global _active_tts_thread
+        step_start = perf_counter()
+        try:
+            speak_text(
+                client,
+                text,
+                voice=VOICE_PRESET,
+                model=TTS_MODEL,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"[TTS] playback failed: {exc}", file=sys.stderr)
+        finally:
+            _log_step_duration("audio.playback", step_start)
+            with _tts_thread_lock:
+                if threading.current_thread() is _active_tts_thread:
+                    _active_tts_thread = None
+
+    thread = threading.Thread(target=_tts_worker, name="tts-playback", daemon=True)
+    with _tts_thread_lock:
+        _active_tts_thread = thread
+    thread.start()
 
 
 def _process_recording(audio_path: Path) -> Dict[str, Any]:
@@ -186,16 +216,12 @@ def _process_recording(audio_path: Path) -> Dict[str, Any]:
 
     tts_error = None
     try:
-        speak_text(
-            client,
-            assistant_text,
-            voice=VOICE_PRESET,
-            model=TTS_MODEL,
-        )
+        _play_response_async(assistant_text)
     except Exception as exc:
         tts_error = str(exc)
     finally:
-        _log_step_duration("audio.playback", step_start)
+        # Each playback thread logs its own duration, so nothing to do here.
+        pass
 
     result: Dict[str, Any] = {
         "status": "ok",
@@ -367,6 +393,9 @@ def handle_console_action(action: ConsoleAction):
         }
 
     elif action.action == "talk":
+        # Always stop any ongoing TTS when talk button is pressed
+        stop_speech()
+        
         if not state["talk_recording_active"]:
             try:
                 path = talk_recorder.start()
