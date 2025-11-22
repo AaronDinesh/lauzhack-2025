@@ -142,6 +142,7 @@ def main() -> None:
             frame_cache.wait_until_ready(timeout=3.0)
             print("[Pipeline] Frame cache initialized")
         except Exception as exc:
+            print(f"Failed to start frame cache: {exc}", file=sys.stderr)
             if frame_cache:
                 frame_cache.stop()
             frame_cache = None
