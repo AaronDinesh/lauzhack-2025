@@ -161,7 +161,7 @@ def capture_with_context(
         jpeg_bytes = capture_frame(camera_index)
 
     saved_path = save_frame_to_logs(jpeg_bytes)
-    content = build_ image_content(message, jpeg_bytes)
+    content = build_image_content(message, jpeg_bytes)
     return content, saved_path
 
 

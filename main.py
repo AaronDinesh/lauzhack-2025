@@ -12,7 +12,7 @@ from openai import OpenAI
 
 from audio.recorder import record_press_to_speak
 from audio.speech_to_text import transcribe_file_sync
-from audio.text_to_speech import speak
+from audio.text_to_speech import speak_text
 from camera.helpers import FrameCache, capture_with_context
 
 
@@ -33,7 +33,7 @@ def _log_step_duration(step_name: str, start_time: float) -> float:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Press-to-speak multimodal chat with OpenAI + ElevenLabs."
+        description="Press-to-speak multimodal chat powered entirely by OpenAI.",
     )
     parser.add_argument(
         "--model",
@@ -47,9 +47,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Camera index for screenshots.",
     )
     parser.add_argument(
+        "--voice",
         "--voice-id",
-        default=os.getenv("ELEVENLABS_VOICE_ID"),
-        help="Override ElevenLabs voice ID.",
+        dest="voice",
+        default=os.getenv("OPENAI_TTS_VOICE", "alloy"),
+        help="OpenAI voice preset to use for speech output (alloy, verse, etc.).",
+    )
+    parser.add_argument(
+        "--tts-model",
+        default=os.getenv("OPENAI_TTS_MODEL", "gpt-4o-mini-tts"),
+        help="TTS model to use for speech synthesis (tts-1, gpt-4o-mini-tts, ...).",
     )
     parser.add_argument(
         "--exit-phrases",
@@ -63,6 +70,50 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Optional system prompt to control assistant behavior.",
     )
     return parser
+
+
+def _stream_assistant_text(
+    client: OpenAI,
+    *,
+    model: str,
+    conversation: List[Dict[str, Any]],
+    reasoning: Dict[str, Any] | None = None,
+) -> str:
+    request_kwargs: Dict[str, Any] = {
+        "model": model,
+        "input": conversation,
+    }
+    if reasoning:
+        request_kwargs["reasoning"] = reasoning
+
+    text_chunks: List[str] = []
+    final_response: Any | None = None
+
+    with client.responses.stream(**request_kwargs) as stream:
+        for event in stream:
+            if event.type == "response.output_text.delta":
+                text_chunks.append(event.delta)
+            elif event.type == "response.error":
+                error = getattr(event, "error", None)
+                message = "OpenAI streaming error"
+                if isinstance(error, dict):
+                    message = error.get("message") or message
+                raise RuntimeError(message)
+
+        final_response = stream.get_final_response()
+
+    assistant_text = "".join(text_chunks).strip()
+    if assistant_text:
+        return assistant_text
+
+    response_dict: Dict[str, Any] = {}
+    if final_response is not None:
+        if hasattr(final_response, "model_dump"):
+            response_dict = final_response.model_dump()  # type: ignore[assignment]
+        elif hasattr(final_response, "to_dict"):
+            response_dict = final_response.to_dict()  # type: ignore[assignment]
+
+    return _extract_first_text(response_dict)
 
 
 def main() -> None:
@@ -147,19 +198,18 @@ def main() -> None:
             conversation.append({"role": "user", "content": content})
 
             try:
-                response = client.responses.create(
+                assistant_text = _stream_assistant_text(
+                    client,
                     model=args.model,
+                    conversation=conversation,
                     reasoning={"effort": "minimal"},
-                    input=conversation,
                 )
-                step_start = _log_step_duration("responses.create", step_start)
-                response_dict = response.to_dict()  # type: ignore[assignment]
+                step_start = _log_step_duration("responses.stream", step_start)
             except Exception as exc:
-                print(f"OpenAI request failed: {exc}", file=sys.stderr)
+                print(f"OpenAI streaming failed: {exc}", file=sys.stderr)
                 conversation.pop()
                 continue
 
-            assistant_text = _extract_first_text(response_dict)
             if not assistant_text:
                 print("Assistant returned no text output.", file=sys.stderr)
                 continue
@@ -173,11 +223,16 @@ def main() -> None:
             )
 
             try:
-                speak(assistant_text, voice_id=args.voice_id)
+                speak_text(
+                    client,
+                    assistant_text,
+                    voice=args.voice,
+                    model=args.tts_model,
+                )
             except Exception as exc:
                 print(f"Unable to play TTS: {exc}", file=sys.stderr)
             finally:
-                step_start = _log_step_duration("text_to_speech", step_start)
+                step_start = _log_step_duration("audio.playback", step_start)
                 total_elapsed = perf_counter() - iteration_start
                 print(f"[Pipeline] total_turn took {total_elapsed:.2f}s")
     finally:

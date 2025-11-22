@@ -1,58 +1,73 @@
-# stt_async_sdk.py
+from __future__ import annotations
+
 import asyncio
 import os
 from io import BytesIO
-from typing import Union
+from typing import IO, Union
 
 from dotenv import load_dotenv
-from elevenlabs.client import ElevenLabs
+from openai import OpenAI
 
-load_dotenv()  # loads ELEVENLABS_API_KEY from .env
-client = ElevenLabs(api_key=os.getenv("ELEVENLABS_API_KEY"))
-
+load_dotenv()
 
 AudioSource = Union[str, BytesIO]
+DEFAULT_TRANSCRIPTION_MODEL = os.getenv(
+    "OPENAI_TRANSCRIPTION_MODEL", "gpt-4o-mini-transcribe"
+)
+DEFAULT_TRANSCRIPTION_LANGUAGE = os.getenv("OPENAI_TRANSCRIPTION_LANGUAGE", "en")
 
 
-async def transcribe_file(audio: AudioSource) -> str:
+class _OpenAITranscriber:
+    """Lazily constructs the OpenAI client to avoid import-time failures."""
+
+    _client: OpenAI | None = None
+
+    @classmethod
+    def client(cls) -> OpenAI:
+        if cls._client is None:
+            cls._client = OpenAI()
+        return cls._client
+
+
+async def transcribe_file(
+    audio: AudioSource, *, model: str | None = None, language: str | None = None
+) -> str:
     """
-    Async STT using the ElevenLabs SDK.
-    Accepts either:
-      - a file path (str)
-      - a BytesIO MP3 buffer returned by your convert_to_mp3_async function
-    Uses asyncio.to_thread to avoid blocking the event loop.
+    Async STT using OpenAI's /audio/transcriptions endpoint.
+    Accepts either a filesystem path or a BytesIO buffer.
     """
+
+    model_name = model or DEFAULT_TRANSCRIPTION_MODEL
+    if not model_name:
+        raise RuntimeError(
+            "No OpenAI transcription model configured. "
+            "Set OPENAI_TRANSCRIPTION_MODEL or pass model explicitly."
+        )
+    lang = language or DEFAULT_TRANSCRIPTION_LANGUAGE or "en"
+
+    def _call_api(handle: IO[bytes]) -> str:
+        response = _OpenAITranscriber.client().audio.transcriptions.create(
+            model=model_name,
+            file=handle,
+            language=lang,
+        )
+        text = getattr(response, "text", "")
+        return text.strip()
 
     def _sync_call() -> str:
         if isinstance(audio, str):
-            # Case 1: audio is a file path
-            with open(audio, "rb") as f:
-                result = client.speech_to_text.convert(
-                    file=f,
-                    model_id="scribe_v1",
-                    language_code="eng",
-                    diarize=True,
-                    tag_audio_events=False,
-                    timestamps_granularity="word",
-                )
-        else:
-            # Case 2: audio is a BytesIO buffer
-            audio.seek(0)
-            result = client.speech_to_text.convert(
-                file=audio,
-                model_id="scribe_v1",
-                language_code="eng",
-                diarize=True,
-                tag_audio_events=False,
-                timestamps_granularity="word",
-            )
+            with open(audio, "rb") as file_handle:
+                return _call_api(file_handle)
 
-        return result.text
+        audio.seek(0)
+        return _call_api(audio)
 
     return await asyncio.to_thread(_sync_call)
 
 
-def transcribe_file_sync(audio: AudioSource) -> str:
+def transcribe_file_sync(
+    audio: AudioSource, *, model: str | None = None, language: str | None = None
+) -> str:
     """Convenience wrapper to transcribe without dealing with asyncio."""
     try:
         loop = asyncio.get_running_loop()
@@ -64,4 +79,4 @@ def transcribe_file_sync(audio: AudioSource) -> str:
             "transcribe_file_sync cannot run inside an existing asyncio loop."
         )
 
-    return asyncio.run(transcribe_file(audio))
+    return asyncio.run(transcribe_file(audio, model=model, language=language))
