@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { forwardRef, useEffect, useState } from 'react';
 
 interface ControlBarProps {
   connected: boolean;
@@ -17,7 +17,8 @@ interface ControlBarProps {
   onSearchPanel: (url: string) => void;
 }
 
-export default function ControlBar({
+const ControlBar = forwardRef<HTMLDivElement, ControlBarProps>(function ControlBar(
+{
   connected,
   bridgeError,
   bridgeEndpoint,
@@ -30,7 +31,8 @@ export default function ControlBar({
   onPanelUrlChange,
   onTogglePanel,
   onSearchPanel,
-}: ControlBarProps) {
+},
+ref) {
   const [showSettings, setShowSettings] = useState(false);
   const [endpointInput, setEndpointInput] = useState(bridgeEndpoint);
   const [panelUrlInput, setPanelUrlInput] = useState(panelUrl);
@@ -49,7 +51,10 @@ export default function ControlBar({
   };
 
   return (
-    <div className="flex flex-wrap items-center gap-4 px-6 py-3 bg-dark border-b border-gray-800">
+    <div
+      ref={ref}
+      className="flex flex-wrap items-center gap-4 px-6 py-3 bg-dark border-b border-gray-800"
+    >
       {/* App Title */}
       <div className="flex items-center gap-2">
         <span className="text-xl">🔧</span>
@@ -178,4 +183,6 @@ export default function ControlBar({
       )}
     </div>
   );
-}
+});
+
+export default ControlBar;

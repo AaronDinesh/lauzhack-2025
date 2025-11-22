@@ -39,16 +39,19 @@ function createWindow() {
   let panelVisible = false;
   let lastPanelUrl = defaultPanelUrl;
   let panelSplit = 0.4; // fraction of window width reserved for panel
+  let controlBarOffset = 0; // pixels to offset panel from top (height of control bar)
 
   const updatePanelBounds = () => {
     const [width, height] = mainWindow.getContentSize();
     // Dock the panel on the right; leave room for the main content.
     const panelWidth = Math.floor(width * panelSplit);
+    const offsetY = Math.max(0, Math.floor(controlBarOffset));
+    const effectiveHeight = Math.max(0, height - offsetY);
     panelView.setBounds({
       x: Math.max(0, width - panelWidth),
-      y: 0,
+      y: offsetY,
       width: panelWidth,
-      height,
+      height: effectiveHeight,
     });
   };
 
@@ -101,13 +104,19 @@ function createWindow() {
     return true;
   });
 
-  ipcMain.handle('panel:resize', async (_event, requestedSplit) => {
-    const nextSplit = clamp(Number(requestedSplit) || panelSplit, 0.2, 0.8);
+  ipcMain.handle('panel:resize', async (_event, payload) => {
+    const { fraction, topOffset } =
+      typeof payload === 'object' ? payload : { fraction: payload };
+
+    const nextSplit = clamp(Number(fraction) || panelSplit, 0.2, 0.8);
+    const nextOffset = clamp(Number(topOffset) || 0, 0, 2000);
+
     panelSplit = nextSplit;
+    controlBarOffset = nextOffset;
     if (panelVisible) {
       updatePanelBounds();
     }
-    return panelSplit;
+    return { panelSplit, controlBarOffset };
   });
 
   mainWindow.on('resize', () => {

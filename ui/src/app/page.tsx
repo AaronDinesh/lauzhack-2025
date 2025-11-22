@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import CameraView from '@/components/CameraView';
 import WebPanel from '@/components/WebPanel';
 import ControlBar from '@/components/ControlBar';
@@ -17,6 +17,7 @@ export default function Home() {
   const [panelVisible, setPanelVisible] = useState(false);
   const [panelUrl, setPanelUrl] = useState<string>(initialPanelUrl);
   const [isResizing, setIsResizing] = useState(false);
+  const [controlBarHeight, setControlBarHeight] = useState(0);
   const [isElectron, setIsElectron] = useState(false);
   const [bridgeEndpoint, setBridgeEndpoint] = useState(
     process.env.NEXT_PUBLIC_MX_BRIDGE_URL || 'http://127.0.0.1:8000/stream'
@@ -25,11 +26,25 @@ export default function Home() {
   const [dockSide, setDockSide] = useState<'left' | 'right'>('right');
   const [workspaceSplit, setWorkspaceSplit] = useState(70); // percentage for camera
   const workspaceRef = useRef<HTMLDivElement>(null);
+  const controlBarRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
       setIsElectron(Boolean(window.electronAPI));
     }
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!controlBarRef.current) return;
+    const updateHeight = () => {
+      setControlBarHeight(controlBarRef.current?.getBoundingClientRect().height || 0);
+    };
+    updateHeight();
+
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(controlBarRef.current);
+
+    return () => observer.disconnect();
   }, []);
 
   const resolveUrl = useCallback(
@@ -61,13 +76,16 @@ export default function Home() {
         setPanelVisible(visible);
         if (visible && window.electronAPI?.resizePanel) {
           // Keep Electron panel width in sync with workspace split
-          await window.electronAPI.resizePanel((100 - workspaceSplit) / 100);
+          await window.electronAPI.resizePanel(
+            (100 - workspaceSplit) / 100,
+            controlBarHeight
+          );
         }
         return;
       }
       setPanelVisible((prev) => !prev);
     },
-    [isElectron, resolveUrl, workspaceSplit]
+    [controlBarHeight, isElectron, resolveUrl, workspaceSplit]
   );
 
   // Connect to MX Bridge via SSE
@@ -117,7 +135,7 @@ export default function Home() {
       setWorkspaceSplit(cameraPercent);
 
       if (isElectron && panelVisible && window.electronAPI?.resizePanel) {
-        window.electronAPI.resizePanel(1 - clamped);
+        window.electronAPI.resizePanel(1 - clamped, controlBarHeight);
       }
     };
 
@@ -138,6 +156,7 @@ export default function Home() {
     <div className="flex flex-col h-screen w-screen bg-darker text-white overflow-hidden">
       {/* Top Control Bar */}
       <ControlBar
+        ref={controlBarRef}
         connected={connected}
         bridgeError={bridgeError}
         bridgeEndpoint={bridgeEndpoint}
