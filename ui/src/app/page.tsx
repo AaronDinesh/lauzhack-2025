@@ -24,22 +24,31 @@ export default function Home() {
     }
   }, []);
 
+  const resolveUrl = useCallback(
+    (urlCandidate?: string) => {
+      const trimmed = urlCandidate?.trim();
+      return trimmed && trimmed.length > 0 ? trimmed : panelUrl || initialPanelUrl;
+    },
+    [panelUrl, initialPanelUrl]
+  );
+
   const showPanelWithUrl = useCallback(
     async (url: string) => {
-      setPanelUrl(url);
+      const resolved = resolveUrl(url);
+      setPanelUrl(resolved);
       if (isElectron && window.electronAPI?.loadPanel) {
-        await window.electronAPI.loadPanel(url);
+        await window.electronAPI.loadPanel(resolved);
         setPanelVisible(true);
         return;
       }
       setPanelVisible(true);
     },
-    [isElectron]
+    [isElectron, resolveUrl]
   );
 
   const togglePanelVisibility = useCallback(
     async (urlOverride?: string) => {
-      const urlToUse = urlOverride || panelUrl || 'https://example.com';
+      const urlToUse = resolveUrl(urlOverride);
       if (isElectron && window.electronAPI?.togglePanel) {
         const visible = await window.electronAPI.togglePanel(urlToUse);
         setPanelVisible(visible);
@@ -47,7 +56,7 @@ export default function Home() {
       }
       setPanelVisible((prev) => !prev);
     },
-    [isElectron, panelUrl]
+    [isElectron, resolveUrl]
   );
 
   // Connect to MX Bridge via SSE
