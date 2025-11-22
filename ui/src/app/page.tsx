@@ -7,7 +7,13 @@ import ControlBar from '@/components/ControlBar';
 import { useMXBridge } from '@/hooks/useMXBridge';
 
 export default function Home() {
-  const initialPanelUrl = process.env.NEXT_PUBLIC_PANEL_URL || 'https://example.com';
+  const sanitizeUrl = (value?: string) => {
+    const trimmed = value?.trim();
+    return trimmed && trimmed.length > 0 ? trimmed : undefined;
+  };
+
+  const initialPanelUrl =
+    sanitizeUrl(process.env.NEXT_PUBLIC_PANEL_URL) || 'https://example.com';
   const [panelVisible, setPanelVisible] = useState(false);
   const [panelUrl, setPanelUrl] = useState<string>(initialPanelUrl);
   const [isElectron, setIsElectron] = useState(false);
@@ -26,8 +32,7 @@ export default function Home() {
 
   const resolveUrl = useCallback(
     (urlCandidate?: string) => {
-      const trimmed = urlCandidate?.trim();
-      return trimmed && trimmed.length > 0 ? trimmed : panelUrl || initialPanelUrl;
+      return sanitizeUrl(urlCandidate) || sanitizeUrl(panelUrl) || initialPanelUrl;
     },
     [panelUrl, initialPanelUrl]
   );

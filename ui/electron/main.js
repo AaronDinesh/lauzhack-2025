@@ -1,7 +1,14 @@
 const { app, BrowserWindow, BrowserView, ipcMain } = require('electron');
 const path = require('path');
 const isDev = process.env.NODE_ENV === 'development';
-const defaultPanelUrl = process.env.PANEL_URL || 'https://example.com';
+
+const sanitizeUrl = (url) => {
+  if (!url) return '';
+  const trimmed = url.trim();
+  return trimmed;
+};
+
+const defaultPanelUrl = sanitizeUrl(process.env.PANEL_URL) || 'https://example.com';
 
 function createWindow() {
   const mainWindow = new BrowserWindow({
@@ -43,7 +50,9 @@ function createWindow() {
   };
 
   const showPanel = async (urlToLoad) => {
-    const url = (urlToLoad && urlToLoad.trim()) || lastPanelUrl || defaultPanelUrl;
+    const sanitized = sanitizeUrl(urlToLoad);
+    const fallback = sanitizeUrl(lastPanelUrl) || sanitizeUrl(defaultPanelUrl);
+    const url = sanitized || fallback;
     if (!url) {
       throw new Error('No URL provided for panel');
     }
@@ -72,7 +81,9 @@ function createWindow() {
   });
 
   ipcMain.handle('panel:load', async (_event, requestedUrl) => {
-    const url = (requestedUrl && requestedUrl.trim()) || lastPanelUrl || defaultPanelUrl;
+    const sanitized = sanitizeUrl(requestedUrl);
+    const fallback = sanitizeUrl(lastPanelUrl) || sanitizeUrl(defaultPanelUrl);
+    const url = sanitized || fallback;
     if (!url) {
       throw new Error('No URL provided for panel');
     }
