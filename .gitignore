@@ -1,4 +1,8 @@
 uv.lock
+node_modules/
+# Keep Electron/Next workspace modules out of git
+ui/node_modules/
+.next/
 # audio files
 *.mp3
 *.m4a
