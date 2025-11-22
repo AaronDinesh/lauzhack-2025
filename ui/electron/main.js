@@ -42,6 +42,7 @@ function createWindow() {
   let lastPanelUrl = defaultPanelUrl;
   let panelSplit = 0.4; // fraction of window width reserved for panel
   let controlBarOffset = 0; // pixels to offset panel from top (height of control bar)
+  let panelInitialized = false;
 
   const updatePanelBounds = () => {
     const [width, height] = mainWindow.getContentSize();
@@ -61,6 +62,7 @@ function createWindow() {
   const loadPanelUrl = async (url) => {
     try {
       await panelView.webContents.loadURL(url);
+      panelInitialized = true;
       return true;
     } catch (err) {
       // Swallow aborted navigations to avoid noisy errors when sites self-redirect.
@@ -72,7 +74,7 @@ function createWindow() {
     }
   };
 
-  const showPanel = async (urlToLoad) => {
+  const showPanel = async (urlToLoad, forceReload = false) => {
     const sanitized = sanitizeUrl(urlToLoad);
     const fallback = sanitizeUrl(lastPanelUrl) || sanitizeUrl(defaultPanelUrl);
     const url = sanitized || fallback;
@@ -80,13 +82,16 @@ function createWindow() {
       throw new Error('No URL provided for panel');
     }
 
-    const ok = await loadPanelUrl(url);
-    if (!ok) return false;
+    const shouldReload = forceReload || !panelInitialized || url !== lastPanelUrl;
+    if (shouldReload) {
+      const ok = await loadPanelUrl(url);
+      if (!ok) return false;
+      lastPanelUrl = url;
+    }
 
     mainWindow.setBrowserView(panelView);
     updatePanelBounds();
     panelVisible = true;
-    lastPanelUrl = url;
     return true;
   };
 
