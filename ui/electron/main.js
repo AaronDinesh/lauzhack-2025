@@ -1,7 +1,7 @@
 const { app, BrowserWindow, BrowserView, ipcMain } = require('electron');
 const path = require('path');
 const isDev = process.env.NODE_ENV === 'development';
-const panelUrl = process.env.PANEL_URL || 'https://example.com';
+const defaultPanelUrl = process.env.PANEL_URL || 'https://example.com';
 
 function createWindow() {
   const mainWindow = new BrowserWindow({
@@ -29,6 +29,7 @@ function createWindow() {
   });
 
   let panelVisible = false;
+  let lastPanelUrl = defaultPanelUrl;
 
   const updatePanelBounds = () => {
     const [width, height] = mainWindow.getContentSize();
@@ -42,11 +43,16 @@ function createWindow() {
   };
 
   const showPanel = async (urlToLoad) => {
-    const url = urlToLoad || panelUrl;
+    const url = (urlToLoad && urlToLoad.trim()) || lastPanelUrl || defaultPanelUrl;
+    if (!url) {
+      throw new Error('No URL provided for panel');
+    }
+
     await panelView.webContents.loadURL(url);
     mainWindow.setBrowserView(panelView);
     updatePanelBounds();
     panelVisible = true;
+    lastPanelUrl = url;
   };
 
   const hidePanel = () => {
@@ -60,16 +66,24 @@ function createWindow() {
       hidePanel();
       return false;
     }
+
     await showPanel(requestedUrl);
     return true;
   });
 
   ipcMain.handle('panel:load', async (_event, requestedUrl) => {
+    const url = (requestedUrl && requestedUrl.trim()) || lastPanelUrl || defaultPanelUrl;
+    if (!url) {
+      throw new Error('No URL provided for panel');
+    }
+
     if (panelVisible) {
-      await panelView.webContents.loadURL(requestedUrl || panelUrl);
+      await panelView.webContents.loadURL(url);
+      lastPanelUrl = url;
       return true;
     }
-    await showPanel(requestedUrl);
+
+    await showPanel(url);
     return true;
   });
 

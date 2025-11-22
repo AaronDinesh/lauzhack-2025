@@ -7,8 +7,9 @@ import ControlBar from '@/components/ControlBar';
 import { useMXBridge } from '@/hooks/useMXBridge';
 
 export default function Home() {
+  const initialPanelUrl = process.env.NEXT_PUBLIC_PANEL_URL || 'https://example.com';
   const [panelVisible, setPanelVisible] = useState(false);
-  const [panelUrl, setPanelUrl] = useState<string>('');
+  const [panelUrl, setPanelUrl] = useState<string>(initialPanelUrl);
   const [isElectron, setIsElectron] = useState(false);
   const [bridgeEndpoint, setBridgeEndpoint] = useState(
     process.env.NEXT_PUBLIC_MX_BRIDGE_URL || 'http://127.0.0.1:8000/stream'
