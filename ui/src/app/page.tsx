@@ -28,6 +28,7 @@ export default function Home() {
   const workspaceRef = useRef<HTMLDivElement>(null);
   const controlBarRef = useRef<HTMLDivElement>(null);
   const HANDLE_WIDTH = 8; // px
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -118,11 +119,12 @@ export default function Home() {
   }, [mockMode, showPanelWithUrl]);
 
   const [panelWasVisibleBeforeSettings, setPanelWasVisibleBeforeSettings] = useState(false);
-  const [panelFallbackActive, setPanelFallbackActive] = useState(false);
   const [panelSnapshot, setPanelSnapshot] = useState<string | null>(null);
+  const [panelDetachedForSettings, setPanelDetachedForSettings] = useState(false);
 
   const handleSettingsVisibilityChange = useCallback(
     async (open: boolean) => {
+      setSettingsOpen(open);
       if (open) {
         if (panelVisible && isElectron && window.electronAPI) {
           setPanelWasVisibleBeforeSettings(true);
@@ -131,20 +133,20 @@ export default function Home() {
             setPanelSnapshot(snapshot);
           }
           await window.electronAPI.detachPanel();
-          setPanelFallbackActive(true);
+          setPanelDetachedForSettings(true);
         } else {
           setPanelWasVisibleBeforeSettings(false);
         }
       } else {
-        if (panelFallbackActive && window.electronAPI) {
+        if (panelDetachedForSettings && window.electronAPI) {
           await window.electronAPI.attachPanel();
-          setPanelFallbackActive(false);
-          setPanelSnapshot(null);
         }
+        setPanelSnapshot(null);
+        setPanelDetachedForSettings(false);
         setPanelWasVisibleBeforeSettings(false);
       }
     },
-    [isElectron, panelFallbackActive, panelVisible, panelWasVisibleBeforeSettings]
+    [isElectron, panelDetachedForSettings, panelVisible]
   );
 
   const startResize = (event: React.MouseEvent<HTMLDivElement>) => {
@@ -217,16 +219,14 @@ export default function Home() {
   >
         {dockSide === 'left' && panelVisible && (
           <>
-            {!isElectron || panelFallbackActive ? (
-              panelSnapshot ? (
-                <img src={panelSnapshot} alt="Panel snapshot" className="w-full h-full object-cover" />
-              ) : (
-                <WebPanel
-                  url={panelUrl}
-                  onClose={() => setPanelVisible(false)}
-                  width={100}
-                />
-              )
+            {!isElectron ? (
+              <WebPanel
+                url={panelUrl}
+                onClose={() => setPanelVisible(false)}
+                width={100}
+              />
+            ) : panelSnapshot && settingsOpen ? (
+              <img src={panelSnapshot} alt="Panel snapshot" className="w-full h-full object-cover" />
             ) : (
               <div
                 className="bg-dark border-r border-gray-800"
@@ -256,16 +256,14 @@ export default function Home() {
               title="Drag to resize panel"
             />
 
-            {!isElectron || panelFallbackActive ? (
-              panelSnapshot ? (
-                <img src={panelSnapshot} alt="Panel snapshot" className="w-full h-full object-cover" />
-              ) : (
-                <WebPanel
-                  url={panelUrl}
-                  onClose={() => setPanelVisible(false)}
-                  width={100}
-                />
-              )
+            {!isElectron ? (
+              <WebPanel
+                url={panelUrl}
+                onClose={() => setPanelVisible(false)}
+                width={100}
+              />
+            ) : panelSnapshot && settingsOpen ? (
+              <img src={panelSnapshot} alt="Panel snapshot" className="w-full h-full object-cover" />
             ) : (
               <div
                 className="bg-dark border-l border-gray-800"
@@ -275,6 +273,10 @@ export default function Home() {
           </>
         )}
       </div>
+
+      {settingsOpen && (
+        <div className="fixed inset-0 z-[9500] bg-black/60 pointer-events-auto" />
+      )}
     </div>
   );
 }
