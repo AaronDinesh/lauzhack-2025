@@ -5,6 +5,7 @@ declare global {
     electronAPI?: {
       togglePanel: (url?: string) => Promise<boolean>;
       loadPanel: (url?: string) => Promise<boolean>;
+      resizePanel: (fraction: number) => Promise<number>;
     };
   }
 }

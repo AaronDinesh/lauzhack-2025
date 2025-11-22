@@ -9,6 +9,7 @@ const sanitizeUrl = (url) => {
 };
 
 const defaultPanelUrl = sanitizeUrl(process.env.PANEL_URL) || 'https://example.com';
+const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 
 function createWindow() {
   const mainWindow = new BrowserWindow({
@@ -37,14 +38,16 @@ function createWindow() {
 
   let panelVisible = false;
   let lastPanelUrl = defaultPanelUrl;
+  let panelSplit = 0.4; // fraction of window width reserved for panel
 
   const updatePanelBounds = () => {
     const [width, height] = mainWindow.getContentSize();
     // Dock the panel on the right; leave room for the main content.
+    const panelWidth = Math.floor(width * panelSplit);
     panelView.setBounds({
-      x: Math.floor(width * 0.6),
+      x: Math.max(0, width - panelWidth),
       y: 0,
-      width: Math.floor(width * 0.4),
+      width: panelWidth,
       height,
     });
   };
@@ -96,6 +99,15 @@ function createWindow() {
 
     await showPanel(url);
     return true;
+  });
+
+  ipcMain.handle('panel:resize', async (_event, requestedSplit) => {
+    const nextSplit = clamp(Number(requestedSplit) || panelSplit, 0.2, 0.8);
+    panelSplit = nextSplit;
+    if (panelVisible) {
+      updatePanelBounds();
+    }
+    return panelSplit;
   });
 
   mainWindow.on('resize', () => {
