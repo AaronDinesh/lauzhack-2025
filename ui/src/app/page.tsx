@@ -123,23 +123,25 @@ export default function Home() {
   const [panelDetachedForSettings, setPanelDetachedForSettings] = useState(false);
 
   const handleSettingsVisibilityChange = useCallback(
-    async (open: boolean) => {
+    (open: boolean) => {
       setSettingsOpen(open);
       if (open) {
         if (panelVisible && isElectron && window.electronAPI) {
           setPanelWasVisibleBeforeSettings(true);
-          const snapshot = await window.electronAPI.capturePanel();
-          if (snapshot) {
-            setPanelSnapshot(snapshot);
-          }
-          await window.electronAPI.detachPanel();
+          // Detach immediately so overlay covers both areas at once.
+          window.electronAPI.detachPanel();
           setPanelDetachedForSettings(true);
+          // Capture asynchronously without blocking the overlay.
+          void window.electronAPI
+            .capturePanel()
+            .then((snapshot) => snapshot && setPanelSnapshot(snapshot))
+            .catch(() => {});
         } else {
           setPanelWasVisibleBeforeSettings(false);
         }
       } else {
         if (panelDetachedForSettings && window.electronAPI) {
-          await window.electronAPI.attachPanel();
+          void window.electronAPI.attachPanel();
         }
         setPanelSnapshot(null);
         setPanelDetachedForSettings(false);
