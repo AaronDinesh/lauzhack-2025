@@ -1,15 +1,19 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 interface ControlBarProps {
   connected: boolean;
   bridgeError: string | null;
   bridgeEndpoint: string;
   mockMode: boolean;
+  panelUrl: string;
+  panelVisible: boolean;
   onSetBridgeEndpoint: (endpoint: string) => void;
   onToggleMockMode: () => void;
   onMockSetUrl: () => void;
+  onPanelUrlChange: (url: string) => void;
+  onTogglePanel: (url?: string) => void;
 }
 
 export default function ControlBar({
@@ -17,12 +21,25 @@ export default function ControlBar({
   bridgeError,
   bridgeEndpoint,
   mockMode,
+  panelUrl,
+  panelVisible,
   onSetBridgeEndpoint,
   onToggleMockMode,
   onMockSetUrl,
+  onPanelUrlChange,
+  onTogglePanel,
 }: ControlBarProps) {
   const [showSettings, setShowSettings] = useState(false);
   const [endpointInput, setEndpointInput] = useState(bridgeEndpoint);
+  const [panelUrlInput, setPanelUrlInput] = useState(panelUrl);
+
+  useEffect(() => {
+    setEndpointInput(bridgeEndpoint);
+  }, [bridgeEndpoint]);
+
+  useEffect(() => {
+    setPanelUrlInput(panelUrl);
+  }, [panelUrl]);
 
   const handleSaveEndpoint = () => {
     onSetBridgeEndpoint(endpointInput);
@@ -30,7 +47,7 @@ export default function ControlBar({
   };
 
   return (
-    <div className="flex items-center gap-4 px-6 py-3 bg-dark border-b border-gray-800">
+    <div className="flex flex-wrap items-center gap-4 px-6 py-3 bg-dark border-b border-gray-800">
       {/* App Title */}
       <div className="flex items-center gap-2">
         <span className="text-xl">🔧</span>
@@ -65,10 +82,30 @@ export default function ControlBar({
         </>
       )}
 
+      {/* Panel Controls */}
+      <div className="flex items-center gap-2 ml-auto bg-gray-800/60 border border-gray-700 rounded-lg px-3 py-2">
+        <input
+          type="text"
+          value={panelUrlInput}
+          onChange={(e) => setPanelUrlInput(e.target.value)}
+          placeholder="https://example.com"
+          className="w-64 px-3 py-1 bg-gray-900 border border-gray-700 rounded focus:outline-none focus:ring-2 focus:ring-primary text-sm"
+        />
+        <button
+          onClick={() => {
+            onPanelUrlChange(panelUrlInput);
+            onTogglePanel(panelUrlInput);
+          }}
+          className="px-3 py-1 text-sm bg-blue-700 hover:bg-blue-600 rounded transition-colors"
+        >
+          {panelVisible ? 'Hide Panel' : 'Show Panel'}
+        </button>
+      </div>
+
       {/* Settings Button */}
       <button
         onClick={() => setShowSettings(!showSettings)}
-        className="ml-auto px-3 py-1 text-sm bg-gray-700 hover:bg-gray-600 rounded transition-colors"
+        className="px-3 py-1 text-sm bg-gray-700 hover:bg-gray-600 rounded transition-colors"
         title="Settings"
       >
         ⚙️ Settings
@@ -131,4 +168,3 @@ export default function ControlBar({
     </div>
   );
 }
-

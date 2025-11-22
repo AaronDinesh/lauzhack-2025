@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import CameraView from '@/components/CameraView';
 import WebPanel from '@/components/WebPanel';
 import ControlBar from '@/components/ControlBar';
@@ -9,6 +9,7 @@ import { useMXBridge } from '@/hooks/useMXBridge';
 export default function Home() {
   const [panelVisible, setPanelVisible] = useState(false);
   const [panelUrl, setPanelUrl] = useState<string>('');
+  const [isElectron, setIsElectron] = useState(false);
   const [bridgeEndpoint, setBridgeEndpoint] = useState(
     process.env.NEXT_PUBLIC_MX_BRIDGE_URL || 'http://127.0.0.1:8000/stream'
   );
@@ -16,14 +17,45 @@ export default function Home() {
   const [dockSide, setDockSide] = useState<'left' | 'right'>('right');
   const [workspaceSplit, setWorkspaceSplit] = useState(70); // percentage for camera
 
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      setIsElectron(Boolean(window.electronAPI));
+    }
+  }, []);
+
+  const showPanelWithUrl = useCallback(
+    async (url: string) => {
+      setPanelUrl(url);
+      if (isElectron && window.electronAPI?.loadPanel) {
+        await window.electronAPI.loadPanel(url);
+        setPanelVisible(true);
+        return;
+      }
+      setPanelVisible(true);
+    },
+    [isElectron]
+  );
+
+  const togglePanelVisibility = useCallback(
+    async (urlOverride?: string) => {
+      const urlToUse = urlOverride || panelUrl || 'https://example.com';
+      if (isElectron && window.electronAPI?.togglePanel) {
+        const visible = await window.electronAPI.togglePanel(urlToUse);
+        setPanelVisible(visible);
+        return;
+      }
+      setPanelVisible((prev) => !prev);
+    },
+    [isElectron, panelUrl]
+  );
+
   // Connect to MX Bridge via SSE
   const { connected, error: bridgeError } = useMXBridge(bridgeEndpoint, {
     onSetUrl: (url: string) => {
-      setPanelUrl(url);
-      setPanelVisible(true);
+      showPanelWithUrl(url);
     },
     onTogglePanel: () => {
-      setPanelVisible((prev) => !prev);
+      togglePanelVisibility();
     },
     onTriggerStep: (step: string) => {
       console.log('[MX Action] Trigger step:', step);
@@ -40,12 +72,10 @@ export default function Home() {
     },
   });
 
-  const handleMockSetUrl = () => {
-    if (mockMode) {
-      setPanelUrl('https://www.example.com');
-      setPanelVisible(true);
-    }
-  };
+  const handleMockSetUrl = useCallback(() => {
+    if (!mockMode) return;
+    showPanelWithUrl('https://www.example.com');
+  }, [mockMode, showPanelWithUrl]);
 
   return (
     <div className="flex flex-col h-screen w-screen bg-darker text-white overflow-hidden">
@@ -55,14 +85,18 @@ export default function Home() {
         bridgeError={bridgeError}
         bridgeEndpoint={bridgeEndpoint}
         mockMode={mockMode}
+        panelUrl={panelUrl}
+        panelVisible={panelVisible}
         onSetBridgeEndpoint={setBridgeEndpoint}
         onToggleMockMode={() => setMockMode(!mockMode)}
         onMockSetUrl={handleMockSetUrl}
+        onPanelUrlChange={setPanelUrl}
+        onTogglePanel={togglePanelVisibility}
       />
 
       {/* Main Content Area */}
       <div className="flex flex-1 overflow-hidden">
-        {dockSide === 'left' && panelVisible && (
+        {dockSide === 'left' && panelVisible && !isElectron && (
           <WebPanel
             url={panelUrl}
             onClose={() => setPanelVisible(false)}
@@ -71,10 +105,10 @@ export default function Home() {
         )}
 
         <CameraView
-          width={panelVisible ? workspaceSplit : 100}
+          width={panelVisible && !isElectron ? workspaceSplit : 100}
         />
 
-        {dockSide === 'right' && panelVisible && (
+        {dockSide === 'right' && panelVisible && !isElectron && (
           <WebPanel
             url={panelUrl}
             onClose={() => setPanelVisible(false)}
@@ -85,4 +119,3 @@ export default function Home() {
     </div>
   );
 }
-
