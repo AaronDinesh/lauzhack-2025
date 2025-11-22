@@ -1,5 +1,5 @@
 [project]
-name = "lauzhack-2025"
+name = "lauzhack"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -10,4 +10,7 @@ dependencies = [
     "numpy>=2.2.6",
     "pydub>=0.25.1",
     "python-dotenv>=1.2.1",
+    "dotenv>=0.9.9",
+    "openai>=2.8.1",
+    "opencv-python>=4.12.0.88",
 ]
