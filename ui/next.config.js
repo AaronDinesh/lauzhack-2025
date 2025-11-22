@@ -1,6 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'export',
+  // Use relative assets so Electron file:// loads pick them up without a web server.
+  assetPrefix: './',
   images: {
     unoptimized: true,
   },
@@ -11,4 +13,3 @@ const nextConfig = {
 }
 
 module.exports = nextConfig
-
