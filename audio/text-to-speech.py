@@ -51,7 +51,7 @@ async def tts_async(
 async def main():
     await tts_async(
         "Hello from ElevenLabs async TTS!",
-        voice_id="JBFqnCBsd6RMkjVDRZzb",
+        voice_id="3gsg3cxXyFLcGIfNbM6C",
         output_path="output.mp3"
     )
 
