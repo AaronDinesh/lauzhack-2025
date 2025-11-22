@@ -55,6 +55,20 @@ function createWindow() {
     });
   };
 
+  const loadPanelUrl = async (url) => {
+    try {
+      await panelView.webContents.loadURL(url);
+      return true;
+    } catch (err) {
+      // Swallow aborted navigations to avoid noisy errors when sites self-redirect.
+      if (err?.code === 'ERR_ABORTED') {
+        return true;
+      }
+      console.error('Failed to load panel URL:', url, err);
+      return false;
+    }
+  };
+
   const showPanel = async (urlToLoad) => {
     const sanitized = sanitizeUrl(urlToLoad);
     const fallback = sanitizeUrl(lastPanelUrl) || sanitizeUrl(defaultPanelUrl);
@@ -63,11 +77,14 @@ function createWindow() {
       throw new Error('No URL provided for panel');
     }
 
-    await panelView.webContents.loadURL(url);
+    const ok = await loadPanelUrl(url);
+    if (!ok) return false;
+
     mainWindow.setBrowserView(panelView);
     updatePanelBounds();
     panelVisible = true;
     lastPanelUrl = url;
+    return true;
   };
 
   const hidePanel = () => {
@@ -99,13 +116,15 @@ function createWindow() {
     }
 
     if (panelVisible) {
-      await panelView.webContents.loadURL(url);
-      lastPanelUrl = url;
-      return true;
+      const ok = await loadPanelUrl(url);
+      if (ok) {
+        lastPanelUrl = url;
+        return true;
+      }
+      return false;
     }
 
-    await showPanel(url);
-    return true;
+    return showPanel(url);
   });
 
   ipcMain.handle('panel:resize', async (_event, payload) => {
