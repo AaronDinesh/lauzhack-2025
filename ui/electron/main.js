@@ -71,6 +71,10 @@ function createWindow() {
   };
 
   const hidePanel = () => {
+    if (panelVisible && panelView.isDestroyed()) {
+      panelVisible = false;
+      return;
+    }
     if (!panelVisible) return;
     mainWindow.removeBrowserView(panelView);
     panelVisible = false;
@@ -133,10 +137,17 @@ function createWindow() {
   }
 
   mainWindow.on('closed', () => {
-    hidePanel();
+    try {
+      hidePanel();
+    } catch (e) {
+      // ignore
+    }
     ipcMain.removeHandler('panel:toggle');
     ipcMain.removeHandler('panel:load');
-    app.quit();
+    ipcMain.removeHandler('panel:resize');
+    if (!app.isQuitting) {
+      app.quit();
+    }
   });
 }
 
