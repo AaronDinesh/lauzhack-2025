@@ -1,0 +1,12 @@
+type: plugin4
+name: JarvisMx
+version: 0.1.0
+displayName: Jarvis Mx
+description: A plugin created with the Logi Plugin SDK
+minimumLoupedeckVersion: 6.1
+
+pluginType: remote
+pluginRuntime: nodejs
+entryPoint: index.mjs
+
+pluginCapabilities:
