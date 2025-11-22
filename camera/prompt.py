@@ -13,56 +13,16 @@ Environment:
 from __future__ import annotations
 
 import argparse
-import base64
 import sys
-from datetime import datetime
-from pathlib import Path
 from typing import Any, Dict
 
-import cv2  # type: ignore
 from dotenv import load_dotenv  # type: ignore
 from openai import OpenAI
 
-
-LOGS_DIR = Path(__file__).resolve().parent / "logs"
+from .helpers import capture_with_context
 
 # Load variables from .env if present so OPENAI_API_KEY is available.
 load_dotenv()
-
-
-def _capture_frame(camera_index: int) -> bytes:
-    """Capture one frame from the given camera index and return JPEG bytes."""
-    capture = cv2.VideoCapture(camera_index)
-    if not capture.isOpened():
-        raise RuntimeError(f"Unable to open camera at index {camera_index}")
-
-    try:
-        ok, frame = capture.read()
-        if not ok or frame is None:
-            raise RuntimeError("Failed to capture a frame from the camera")
-
-        ok, buffer = cv2.imencode(".jpg", frame)
-        if not ok:
-            raise RuntimeError("Failed to encode frame as JPEG")
-
-        return buffer.tobytes()
-    finally:
-        capture.release()
-
-
-def _jpeg_bytes_to_data_url(jpeg_bytes: bytes) -> str:
-    """Convert JPEG bytes to a data URL string for the OpenAI API."""
-    b64 = base64.b64encode(jpeg_bytes).decode("ascii")
-    return f"data:image/jpeg;base64,{b64}"
-
-
-def _save_frame_to_logs(jpeg_bytes: bytes, logs_dir: Path = LOGS_DIR) -> Path:
-    """Persist the captured frame into the logs directory."""
-    logs_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    destination = logs_dir / f"screenshot-{timestamp}.jpg"
-    destination.write_bytes(jpeg_bytes)
-    return destination
 
 
 def send_message_with_camera(
@@ -76,22 +36,11 @@ def send_message_with_camera(
 
     Returns the full response dictionary for maximum flexibility.
     """
-    jpeg_bytes = _capture_frame(camera_index)
-    saved_path = _save_frame_to_logs(jpeg_bytes)
-    image_url = _jpeg_bytes_to_data_url(jpeg_bytes)
-
+    content, saved_path = capture_with_context(message, camera_index=camera_index)
     client = OpenAI()
     response = client.responses.create(
         model=model,
-        input=[
-            {
-                "role": "user",
-                "content": [
-                    {"type": "input_text", "text": message},
-                    {"type": "input_image", "image_url": image_url},
-                ],
-            }
-        ],
+        input=[{"role": "user", "content": content}],
     )
     print(f"Saved screenshot to {saved_path}", file=sys.stderr)
     return response.to_dict()  # type: ignore[no-any-return]

@@ -1,16 +1,20 @@
 # stt_async_sdk.py
-import os
 import asyncio
+import os
+from io import BytesIO
+from typing import Union
+
 from dotenv import load_dotenv
 from elevenlabs.client import ElevenLabs
-from io import BytesIO
 
 load_dotenv()  # loads ELEVENLABS_API_KEY from .env
 client = ElevenLabs(api_key=os.getenv("ELEVENLABS_API_KEY"))
 
 
+AudioSource = Union[str, BytesIO]
 
-async def transcribe_file(audio: str | BytesIO) -> str:
+
+async def transcribe_file(audio: AudioSource) -> str:
     """
     Async STT using the ElevenLabs SDK.
     Accepts either:
@@ -47,10 +51,17 @@ async def transcribe_file(audio: str | BytesIO) -> str:
 
     return await asyncio.to_thread(_sync_call)
 
-# Example usage
-async def main():
-    text = await transcribe_file("test.m4a")
-    print(text)
 
-if __name__ == "__main__":
-    asyncio.run(main())
+def transcribe_file_sync(audio: AudioSource) -> str:
+    """Convenience wrapper to transcribe without dealing with asyncio."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        raise RuntimeError(
+            "transcribe_file_sync cannot run inside an existing asyncio loop."
+        )
+
+    return asyncio.run(transcribe_file(audio))
