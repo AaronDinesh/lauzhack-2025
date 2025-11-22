@@ -117,6 +117,25 @@ export default function Home() {
     showPanelWithUrl('https://www.example.com');
   }, [mockMode, showPanelWithUrl]);
 
+  const [panelWasVisibleBeforeSettings, setPanelWasVisibleBeforeSettings] = useState(false);
+
+  const handleSettingsVisibilityChange = useCallback(
+    async (open: boolean) => {
+      if (open) {
+        if (panelVisible) {
+          setPanelWasVisibleBeforeSettings(true);
+          await togglePanelVisibility();
+        } else {
+          setPanelWasVisibleBeforeSettings(false);
+        }
+      } else if (panelWasVisibleBeforeSettings) {
+        await togglePanelVisibility();
+        setPanelWasVisibleBeforeSettings(false);
+      }
+    },
+    [panelVisible, panelWasVisibleBeforeSettings, togglePanelVisibility]
+  );
+
   const startResize = (event: React.MouseEvent<HTMLDivElement>) => {
     event.preventDefault();
     setIsResizing(true);
@@ -170,6 +189,7 @@ export default function Home() {
         onPanelUrlChange={setPanelUrl}
         onTogglePanel={togglePanelVisibility}
         onSearchPanel={showPanelWithUrl}
+        onSettingsVisibilityChange={handleSettingsVisibilityChange}
       />
 
       {/* Main Content Area */}

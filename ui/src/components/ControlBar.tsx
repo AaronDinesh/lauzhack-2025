@@ -15,6 +15,7 @@ interface ControlBarProps {
   onPanelUrlChange: (url: string) => void;
   onTogglePanel: (url?: string) => void;
   onSearchPanel: (url: string) => void;
+  onSettingsVisibilityChange: (open: boolean) => void;
 }
 
 const ControlBar = forwardRef<HTMLDivElement, ControlBarProps>(function ControlBar(
@@ -31,6 +32,7 @@ const ControlBar = forwardRef<HTMLDivElement, ControlBarProps>(function ControlB
   onPanelUrlChange,
   onTogglePanel,
   onSearchPanel,
+  onSettingsVisibilityChange,
 },
 ref) {
   const [showSettings, setShowSettings] = useState(false);
@@ -48,6 +50,13 @@ ref) {
   const handleSaveEndpoint = () => {
     onSetBridgeEndpoint(endpointInput);
     setShowSettings(false);
+    onSettingsVisibilityChange(false);
+  };
+
+  const toggleSettings = () => {
+    const next = !showSettings;
+    setShowSettings(next);
+    onSettingsVisibilityChange(next);
   };
 
   return (
@@ -120,7 +129,7 @@ ref) {
 
       {/* Settings Button */}
       <button
-        onClick={() => setShowSettings(!showSettings)}
+        onClick={toggleSettings}
         className="px-3 py-1 text-sm bg-gray-700 hover:bg-gray-600 rounded transition-colors"
         title="Settings"
       >
@@ -172,6 +181,7 @@ ref) {
                 onClick={() => {
                   setEndpointInput(bridgeEndpoint);
                   setShowSettings(false);
+                  onSettingsVisibilityChange(false);
                 }}
                 className="flex-1 btn btn-secondary"
               >
