@@ -1,13 +1,16 @@
 import asyncio
 import os
 from typing import Optional
-from elevenlabs.client import ElevenLabs
-from elevenlabs import save  # optional, for saving to file
+
 from dotenv import load_dotenv
+from elevenlabs import save  # optional, for saving to file
+from elevenlabs.client import ElevenLabs
 from elevenlabs.play import play
 
-load_dotenv() 
+load_dotenv()
 client = ElevenLabs(api_key=os.getenv("ELEVENLABS_API_KEY"))
+DEFAULT_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID")
+
 
 async def tts_async(
     text: str,
@@ -47,13 +50,35 @@ async def tts_async(
     return await asyncio.to_thread(_sync_call)
 
 
+def speak(
+    text: str,
+    *,
+    voice_id: Optional[str] = None,
+    model_id: str = "eleven_multilingual_v2",
+    output_format: str = "mp3_44100_128",
+    output_path: Optional[str] = None,
+) -> None:
+    """Blocking helper that plays TTS audio immediately."""
+    resolved_voice = voice_id or DEFAULT_VOICE_ID
+    if not resolved_voice:
+        raise RuntimeError(
+            "No ElevenLabs voice configured. Set ELEVENLABS_VOICE_ID or pass voice_id."
+        )
 
-async def main():
-    await tts_async(
-        "Hello from ElevenLabs async TTS!",
-        voice_id="JBFqnCBsd6RMkjVDRZzb",
-        output_path="output.mp3"
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        raise RuntimeError("speak() cannot be used inside an active asyncio loop.")
+
+    asyncio.run(
+        tts_async(
+            text,
+            resolved_voice,
+            model_id=model_id,
+            output_format=output_format,
+            output_path=output_path,
+        )
     )
-
-if __name__ == "__main__":
-    asyncio.run(main())
