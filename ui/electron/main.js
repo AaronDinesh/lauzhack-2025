@@ -46,13 +46,16 @@ function createWindow() {
 
   const updatePanelBounds = () => {
     const [width, height] = mainWindow.getContentSize();
-    // Dock the panel on the right; leave room for the main content.
-    const availableWidth = Math.max(0, width - PANEL_HANDLE_WIDTH);
-    const panelWidth = Math.floor(availableWidth * panelSplit);
+    // Dock the panel on the right; leave room for the main content and handle.
+    const cameraFraction = 1 - panelSplit;
+    const cameraWidth = Math.max(0, Math.round(width * cameraFraction));
+    const panelWidth = Math.max(0, width - cameraWidth - PANEL_HANDLE_WIDTH);
+    const panelX = cameraWidth + PANEL_HANDLE_WIDTH;
+
     const offsetY = Math.max(0, Math.floor(controlBarOffset));
     const effectiveHeight = Math.max(0, height - offsetY);
     panelView.setBounds({
-      x: Math.max(0, width - panelWidth),
+      x: Math.max(0, panelX),
       y: offsetY,
       width: panelWidth,
       height: effectiveHeight,

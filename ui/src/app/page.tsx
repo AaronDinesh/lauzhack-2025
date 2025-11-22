@@ -177,13 +177,13 @@ export default function Home() {
         className="grid flex-1 overflow-hidden"
         ref={workspaceRef}
         style={{
-          gridTemplateColumns: panelVisible
-            ? dockSide === 'left'
-              ? `${100 - workspaceSplit}% ${HANDLE_WIDTH}px ${workspaceSplit}%`
-              : `${workspaceSplit}% ${HANDLE_WIDTH}px ${100 - workspaceSplit}%`
-            : '100%',
-        }}
-      >
+      gridTemplateColumns: panelVisible
+        ? dockSide === 'left'
+          ? `calc(${100 - workspaceSplit}% - ${HANDLE_WIDTH}px) ${HANDLE_WIDTH}px ${workspaceSplit}%`
+          : `${workspaceSplit}% ${HANDLE_WIDTH}px calc(${100 - workspaceSplit}% - ${HANDLE_WIDTH}px)`
+        : '100%',
+    }}
+  >
         {dockSide === 'left' && panelVisible && (
           <>
             {!isElectron ? (
