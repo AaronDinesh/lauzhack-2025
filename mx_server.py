@@ -16,6 +16,7 @@ import zmq
 from audio.recorder import ContinuousRecorder
 from audio.speech_to_text import transcribe_file_sync
 from audio.text_to_speech import speak_text, stop_speech
+from audio.notifications import play_tool_complete_sound
 from camera.helpers import (
     FrameCache,
     capture_with_context,
@@ -23,6 +24,8 @@ from camera.helpers import (
     save_frame_to_logs,
     build_image_content,
 )
+from assistant_plan import AssistantPlan, build_system_prompt, parse_assistant_plan_response
+from tool_executor import ToolExecutor
 
 load_dotenv()
 
@@ -52,16 +55,18 @@ state: Dict[str, Any] = {
     "talk_recording_active": False,
     "last_transcript": None,
     "last_response": None,
+    "last_plan": None,
+    "tools_active": False,
+    "active_tools": [],
+    "last_tool_status": None,
 }
 
 MODEL_NAME = os.getenv("JARVIS_RESPONSES_MODEL", "gpt-5-nano")
 VOICE_PRESET = os.getenv("OPENAI_TTS_VOICE", "alloy")
 TTS_MODEL = os.getenv("OPENAI_TTS_MODEL", "gpt-4o-mini-tts")
 REASONING_EFFORT = os.getenv("JARVIS_REASONING_EFFORT", "minimal")
-SYSTEM_PROMPT = os.getenv(
-    "JARVIS_SYSTEM_PROMPT",
-    "You are a friendly assistant that describes what you see and converses naturally.",
-)
+DEFAULT_SYSTEM_PROMPT = build_system_prompt()
+SYSTEM_PROMPT = os.getenv("JARVIS_SYSTEM_PROMPT", "").strip() or DEFAULT_SYSTEM_PROMPT
 EXIT_PHRASES = {
     phrase.strip().lower()
     for phrase in os.getenv("JARVIS_EXIT_PHRASES", "quit,exit,goodbye").split(",")
@@ -85,6 +90,7 @@ if SYSTEM_PROMPT:
     )
 
 frame_cache: FrameCache | None = None  # initialized at startup if enabled
+tool_executor: ToolExecutor | None = None
 _tts_thread_lock = threading.Lock()
 _active_tts_thread: threading.Thread | None = None
 _ui_frame: Dict[str, Any] = {"data": None, "ts": 0.0}
@@ -106,6 +112,69 @@ def _log_step_duration(step_name: str, start_time: float) -> float:
     elapsed = perf_counter() - start_time
     print(f"[Pipeline] {step_name} took {elapsed:.2f}s")
     return perf_counter()
+
+
+def _request_assistant_plan(conversation_history: List[Dict[str, Any]]) -> AssistantPlan:
+    request_kwargs: Dict[str, Any] = {
+        "model": MODEL_NAME,
+        "input": conversation_history,
+        "text_format": AssistantPlan,
+    }
+    if REASONING_EFFORT:
+        request_kwargs["reasoning"] = {"effort": REASONING_EFFORT}
+    response = client.responses.parse(**request_kwargs)
+    return parse_assistant_plan_response(response)
+
+
+def _play_tool_sound_async() -> None:
+    def _worker() -> None:
+        try:
+            play_tool_complete_sound()
+        except Exception as exc:  # noqa: BLE001
+            print(f"[Audio] Tool completion sound failed: {exc}", file=sys.stderr)
+
+    threading.Thread(target=_worker, name="tool-done-chime", daemon=True).start()
+
+
+def _reset_tool_state(clear_status: bool = False) -> None:
+    state["tools_active"] = False
+    state["active_tools"] = []
+    if clear_status:
+        state["last_tool_status"] = None
+
+
+def _handle_tool_status_update(message: str) -> None:
+    print(f"[Tools] {message}")
+    state["last_tool_status"] = message
+    lowered = message.lower()
+    if lowered.startswith("running"):
+        state["tools_active"] = True
+    elif "finished" in lowered or "failed" in lowered:
+        state["tools_active"] = False
+        if state["active_tools"]:
+            _play_tool_sound_async()
+        state["active_tools"] = []
+
+
+def _dispatch_tool_plan(plan: AssistantPlan, screenshot_path: Path) -> None:
+    if not plan.tool_calls:
+        _reset_tool_state(clear_status=True)
+        return
+
+    state["tools_active"] = True
+    state["active_tools"] = [call.tool for call in plan.tool_calls]
+    queued_summary = f"Running {len(plan.tool_calls)} tool(s)..."
+    state["last_tool_status"] = queued_summary
+    print(f"[Tools] {queued_summary}")
+
+    if tool_executor is None:
+        print("[Tools] ToolExecutor not initialized; skipping tool execution", file=sys.stderr)
+        state["tools_active"] = False
+        state["last_tool_status"] = "Tool executor unavailable"
+        state["active_tools"] = []
+        return
+
+    tool_executor.submit(plan, str(screenshot_path), status_callback=_handle_tool_status_update)
 
 
 def _get_ui_frame_bytes(max_age: float = 1.5) -> Optional[bytes]:
@@ -277,18 +346,30 @@ def _process_recording(audio_path: Path) -> Dict[str, Any]:
 
     conversation.append({"role": "user", "content": content})
 
+    plan: AssistantPlan | None = None
+    plan_error: Optional[str] = None
+    assistant_text = ""
+
     try:
-        assistant_text = _stream_assistant_text(conversation)
-        step_start = _log_step_duration("responses.stream", step_start)
+        plan = _request_assistant_plan(conversation)
+        assistant_text = plan.voice.strip()
+        step_start = _log_step_duration("responses.parse", step_start)
     except Exception as exc:
-        conversation.pop()  # remove the failed user turn
-        return {
-            "status": "error",
-            "error": f"Assistant streaming failed: {exc}",
-            "transcript": transcript,
-        }
+        plan_error = str(exc)
+        print(f"[Planning] AssistantPlan parsing failed: {exc}", file=sys.stderr)
+        try:
+            assistant_text = _stream_assistant_text(conversation)
+            step_start = _log_step_duration("responses.stream", step_start)
+        except Exception as stream_exc:
+            conversation.pop()  # remove the failed user turn
+            return {
+                "status": "error",
+                "error": f"Assistant streaming failed: {stream_exc}",
+                "transcript": transcript,
+            }
 
     if not assistant_text:
+        conversation.pop()
         return {
             "status": "error",
             "error": "Assistant returned no text output.",
@@ -308,16 +389,29 @@ def _process_recording(audio_path: Path) -> Dict[str, Any]:
         _play_response_async(assistant_text)
     except Exception as exc:
         tts_error = str(exc)
-    finally:
-        # Each playback thread logs its own duration, so nothing to do here.
-        pass
+
+    plan_dict: Optional[Dict[str, Any]] = None
+    if plan:
+        plan_dict = plan.model_dump()
+        state["last_plan"] = plan_dict
+        _dispatch_tool_plan(plan, screenshot_path)
+    else:
+        state["last_plan"] = None
 
     result: Dict[str, Any] = {
         "status": "ok",
         "transcript": transcript,
         "assistant_text": assistant_text,
         "screenshot_path": screenshot_path,
+        "plan": plan_dict,
+        "tools_active": state["tools_active"],
+        "active_tools": state["active_tools"],
+        "last_tool_status": state["last_tool_status"],
     }
+    if plan_dict and "tool_calls" in plan_dict:
+        result["tool_calls"] = plan_dict["tool_calls"]
+    if plan_error:
+        result["plan_error"] = plan_error
     if tts_error:
         result["tts_error"] = tts_error
     return result
@@ -370,7 +464,7 @@ def recording_status() -> Dict[str, Any]:
 
 @app.on_event("startup")
 def _startup() -> None:
-    global frame_cache, _zmq_thread
+    global frame_cache, _zmq_thread, tool_executor
     if USE_FRAME_CACHE:
         try:
             frame_cache = FrameCache(camera_index=CAMERA_INDEX, refresh_interval=0.2)
@@ -388,9 +482,13 @@ def _startup() -> None:
         _zmq_thread = threading.Thread(target=_frame_listener, name="ui-frame-listener", daemon=True)
         _zmq_thread.start()
 
+    if tool_executor is None:
+        tool_executor = ToolExecutor(model=MODEL_NAME)
+
 
 @app.on_event("shutdown")
 def _shutdown() -> None:
+    global tool_executor
     if frame_cache:
         frame_cache.stop()
     _zmq_stop.set()
@@ -401,6 +499,9 @@ def _shutdown() -> None:
             _zmq_context.term()
         except Exception:
             pass
+    if tool_executor:
+        tool_executor.shutdown()
+        tool_executor = None
 
 
 # Fake "VLM" / LLM pipeline
@@ -481,113 +582,6 @@ def _extract_json_from_response(resp: Any) -> Dict[str, Any]:
         print(f"[VLM] Failed to parse JSON: {exc}", file=sys.stderr)
     return {}
 
-
-def analyse_scene_with_vlm() -> Dict[str, Any]:
-    """
-    Real VLM call: capture a frame and ask the model for structured components/resources.
-    Falls back to stub on failure.
-    """
-    # Capture image + recent conversation context; description drives the vision call.
-    content, screenshot_path = fetch_frame_with_context(
-        "Identify visible PC components and propose manuals/videos."
-    )
-    print(f"[VLM] Captured screenshot for analysis at {screenshot_path}")
-
-    schema = {
-        "name": "scene_analysis",
-        "schema": {
-            "type": "object",
-            "properties": {
-                "components": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "name": {"type": "string"},
-                            "type": {"type": "string"},
-                            "manual_url": {"type": "string"},
-                            "video_url": {"type": "string"},
-                        },
-                        "required": ["name", "type"],
-                    },
-                },
-                "resource_slots": {
-                    "type": "object",
-                    "patternProperties": {
-                        "^resource_[1-3]$": {
-                            "type": "object",
-                            "properties": {
-                                "label": {"type": "string"},
-                                "icon": {"type": "string"},
-                                "url": {"type": "string"},
-                            },
-                            "required": ["label", "icon", "url"],
-                        }
-                    },
-                    "additionalProperties": False,
-                },
-            },
-            "required": ["components", "resource_slots"],
-        },
-        "strict": True,
-    }
-
-    system_prompt = (
-        "You are Jarvis, a PC hardware assistant. Inspect the image and text, "
-        "identify the most relevant devices, and map resource slots for a Logitech MX keypad. "
-        "You MUST fill resource_1/2/3 with concise labels (emoji allowed), icons, and real URLs "
-        "to manuals/support pages or reputable tutorials (no placeholders). "
-        "Prefer: resource_1 = primary device manual; resource_2 = secondary device manual or alternate guide; "
-        "resource_3 = video tutorial for the primary device. "
-        "Return ONLY JSON matching the provided schema."
-    )
-
-    try:
-        resp = client.responses.create(
-            model=MODEL_NAME,
-            response_format={"type": "json_schema", "json_schema": schema},
-            input=[
-                {
-                    "role": "system",
-                    "content": [{"type": "input_text", "text": system_prompt}],
-                },
-                {
-                    "role": "user",
-                    "content": content
-                    + [
-                        {
-                            "type": "input_text",
-                            "text": (
-                                "Populate resource_1/2/3 with label, icon, url for the keypad. "
-                                "You MUST avoid placeholders; pick the closest relevant manual/support page or a reputable tutorial link. "
-                                "Keep labels short and keypad-friendly (emoji allowed)."
-                            ),
-                        }
-                    ],
-                },
-            ],
-        )
-
-        parsed = _extract_json_from_response(resp)
-        if parsed:
-            components = parsed.get("components") or []
-            resource_slots = parsed.get("resource_slots") or {}
-
-            # If VLM did not propose resources, derive sensible defaults from components.
-            if not resource_slots:
-                if components:
-                    resource_slots = _build_resource_slots_from_components(components)
-                else:
-                    # Last resort: stub
-                    stub = analyse_scene_with_vlm_stub()
-                    components = stub["components"]
-                    resource_slots = stub["resource_slots"]
-
-            return {"components": components, "resource_slots": resource_slots}
-    except Exception as exc:  # noqa: BLE001
-        print(f"[VLM] Analysis failed, will fall back to stub: {exc}", file=sys.stderr)
-
-    return analyse_scene_with_vlm_stub()
 
 
 def _build_summary_from_components(components: List[Dict[str, Any]]) -> str:
@@ -683,36 +677,11 @@ def handle_console_action(action: ConsoleAction):
     """
     print("Received console action:", action)
 
-    if action.action == "scan":
-        # pretend to analyse scene with a VLM/LLM
-        result = analyse_scene_with_vlm()
-        state["mode"] = "scanned"
-        state["components"] = result["components"]
-        state["resource_slots"] = result["resource_slots"]
-
-        buttons = _build_buttons_from_state(state["resource_slots"])
-
-        summary = _build_summary_from_components(state["components"])
-
-        return {
-            "status": "ok",
-            "mode": state["mode"],
-            "message": summary,
-            "buttons": buttons,
-        }
-
-    elif action.action == "talk":
+    if action.action == "talk":
         # Always stop any ongoing TTS when talk button is pressed
         stop_speech()
         
         if not state["talk_recording_active"]:
-            buttons: List[Dict[str, Any]] = []
-            if not state["components"] or not state["resource_slots"]:
-                # Populate resource slots on first listen so keypad can react.
-                result = analyse_scene_with_vlm()
-                state["components"] = result["components"]
-                state["resource_slots"] = result["resource_slots"]
-                buttons = _build_buttons_from_state(state["resource_slots"])
 
             try:
                 path = talk_recorder.start()
@@ -736,9 +705,6 @@ def handle_console_action(action: ConsoleAction):
                 "recording": recording_status(),
             }
 
-            if buttons:
-                response["buttons"] = buttons
-
             return response
 
         try:
@@ -760,26 +726,12 @@ def handle_console_action(action: ConsoleAction):
         state["last_transcript"] = processing.get("transcript")
         state["last_response"] = processing.get("assistant_text")
 
-        # Ensure resources are populated even if VLM missed them earlier.
-        if not state["resource_slots"]:
-            try:
-                result = analyse_scene_with_vlm()
-                state["components"] = result["components"]
-                state["resource_slots"] = result["resource_slots"]
-            except Exception as exc:  # noqa: BLE001
-                print(f"[VLM] Failed to populate resources on stop: {exc}", file=sys.stderr)
-
-        buttons = _build_buttons_from_state(state["resource_slots"])
-        resource_note = _summarize_resources(state["resource_slots"])
-
         response_payload = {
             "status": processing.get("status", "ok"),
             "mode": state["mode"],
-            "message": "Jarvis stopped listening." if not resource_note else resource_note,
+            "message": "Jarvis stopped listening.",
             "recording": {"recording": False, "path": str(path)},
         }
-        if buttons:
-            response_payload["buttons"] = buttons
         response_payload.update(processing)
         return response_payload
 
@@ -788,42 +740,34 @@ def handle_console_action(action: ConsoleAction):
         stop_speech()
         if state["talk_recording_active"]:
             try:
-                state["mode"] = "processing"
                 path = talk_recorder.stop()
-                processing = _process_recording(Path(path))
-                state["last_recording"] = str(path)
-                state["last_transcript"] = processing.get("transcript")
-                state["last_response"] = processing.get("assistant_text")
             except Exception as exc:  # noqa: BLE001
-                processing = {"status": "error", "error": f"Failed to stop recording: {exc}"}
-            finally:
-                state["talk_recording_active"] = False
-                state["current_recording"] = None
-                state["mode"] = "idle"
+                return {
+                    "status": "error",
+                    "error": f"Failed to stop talk recording: {exc}",
+                    "recording": recording_status(),
+                }
 
-            if not state["resource_slots"]:
-                try:
-                    result = analyse_scene_with_vlm()
-                    state["components"] = result["components"]
-                    state["resource_slots"] = result["resource_slots"]
-                except Exception as exc:  # noqa: BLE001
-                    print(f"[VLM] Failed to populate resources on stop action: {exc}", file=sys.stderr)
+            state["mode"] = "processing"
+            processing = _process_recording(Path(path))
 
-            buttons = _build_buttons_from_state(state["resource_slots"])
-            resource_note = _summarize_resources(state["resource_slots"])
+            state["mode"] = "idle"
+            state["talk_recording_active"] = False
+            state["last_recording"] = str(path)
+            state["current_recording"] = None
+            state["last_transcript"] = processing.get("transcript")
+            state["last_response"] = processing.get("assistant_text")
 
             response_payload = {
                 "status": processing.get("status", "ok"),
                 "mode": state["mode"],
-                "message": "Jarvis stopped." if not resource_note else resource_note,
-                "recording": {"recording": False, "path": state.get("last_recording")},
+                "message": "Jarvis stopped listening.",
+                "recording": {"recording": False, "path": str(path)},
             }
-            if buttons:
-                response_payload["buttons"] = buttons
+
             response_payload.update(processing)
             return response_payload
 
-        state["mode"] = "idle"
         return {"status": "ok", "mode": state["mode"], "message": "Jarvis stopped."}
 
     elif action.action.startswith("resource_"):
@@ -866,6 +810,10 @@ def get_status():
         "listening": state.get("talk_recording_active", False),
         "last_transcript": state.get("last_transcript"),
         "last_response": state.get("last_response"),
+        "last_plan": state.get("last_plan"),
+        "tools_active": state.get("tools_active", False),
+        "active_tools": state.get("active_tools", []),
+        "last_tool_status": state.get("last_tool_status"),
     }
 
 
