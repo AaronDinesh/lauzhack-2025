@@ -2,6 +2,7 @@
 runs/
 yolo_pc_part/training_dataset
 *.pt
+<<<<<<< HEAD
 
 # image formats
 *.png
@@ -12,7 +13,6 @@ yolo_pc_part/training_dataset
 *.safetensors
 
 uv.lock
-<<<<<<< HEAD
 .python-version
 .DS_Store
 .idea/
@@ -27,7 +27,16 @@ coverage/
 *.tmp
 *.swp
 
-=======
+
+# image formats
+*.png
+*.jpg
+*.jpeg
+
+# sam
+*.safetensors
+
+uv.lock
 node_modules/
 # Keep Electron/Next workspace modules out of git
 ui/node_modules/
@@ -35,7 +44,6 @@ ui/node_modules/
 # Build outputs from UI/Electron
 ui/out/
 ui/dist-electron/
->>>>>>> main
 # audio files
 *.mp3
 *.m4a
@@ -60,7 +68,6 @@ lib/
 lib64/
 parts/
 sdist/
-.next/
 var/
 wheels/
 share/python-wheels/
