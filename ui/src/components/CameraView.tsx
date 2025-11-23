@@ -1,59 +1,154 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 interface CameraViewProps {
   width: number; // percentage
-  backendUrl: string;
+  frameEndpoint: string;
 }
 
-export default function CameraView({ width, backendUrl }: CameraViewProps) {
-  const [error, setError] = useState<string>('');
-  const [imgUrl, setImgUrl] = useState<string>('');
-  const [refreshMs, setRefreshMs] = useState<number>(1000);
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+const SNAPSHOT_INTERVAL_MS = 1000;
 
-  const fetchFrame = async () => {
+export default function CameraView({ width, frameEndpoint }: CameraViewProps) {
+  const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
+  const [cameraActive, setCameraActive] = useState(false);
+  const [error, setError] = useState<string>('');
+
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const sendIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  const enumerateDevices = useCallback(async () => {
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.enumerateDevices) {
+      setError('Camera API unavailable');
+      return;
+    }
     try {
-      if (!backendUrl || !backendUrl.trim()) {
-        setError('No backend URL configured');
-        return;
+      const all = await navigator.mediaDevices.enumerateDevices();
+      const videoDevices = all.filter((d) => d.kind === 'videoinput');
+      setDevices(videoDevices);
+      if (videoDevices.length > 0 && !selectedDeviceId) {
+        setSelectedDeviceId(videoDevices[0].deviceId);
       }
-      const url = `${backendUrl.replace(/\/$/, '')}/frame`;
-      const res = await fetch(url);
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
+    } catch (err) {
+      console.error('Failed to enumerate devices:', err);
+      setError('Unable to enumerate camera devices');
+    }
+  }, [selectedDeviceId]);
+
+  const requestAccess = useCallback(async () => {
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      setError('Camera API unavailable');
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      stream.getTracks().forEach((track) => track.stop());
+      setError('');
+      await enumerateDevices();
+    } catch (err) {
+      console.error('Camera permission denied:', err);
+      setError('Camera permission denied');
+    }
+  }, [enumerateDevices]);
+
+  const stopCamera = useCallback(() => {
+    if (sendIntervalRef.current) {
+      clearInterval(sendIntervalRef.current);
+      sendIntervalRef.current = null;
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setCameraActive(false);
+  }, []);
+
+  const startCamera = useCallback(async () => {
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      setError('Camera API unavailable');
+      return;
+    }
+
+    if (!selectedDeviceId && devices.length === 0) {
+      await requestAccess();
+      return;
+    }
+
+    try {
+      if (streamRef.current) {
+        stopCamera();
       }
-      const blob = await res.blob();
-      const objectUrl = URL.createObjectURL(blob);
-      setImgUrl((prev) => {
-        if (prev && prev.startsWith('blob:')) {
-          URL.revokeObjectURL(prev);
-        }
-        return objectUrl;
-      });
+      const constraints: MediaStreamConstraints = {
+        video: {
+          deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+        },
+      };
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+      setCameraActive(true);
       setError('');
     } catch (err) {
-      console.error('Failed to fetch frame:', err);
-      setError('Unable to fetch camera frame');
+      console.error('Failed to start camera:', err);
+      setError('Failed to start camera');
     }
-  };
+  }, [devices.length, requestAccess, selectedDeviceId, stopCamera]);
+
+  const sendFrame = useCallback(async () => {
+    if (!cameraActive) return;
+    if (typeof window === 'undefined' || !window.electronAPI?.sendFrame) return;
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas || video.readyState < 2) return;
+    if (!video.videoWidth || !video.videoHeight) return;
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    const blob: Blob | null = await new Promise((resolve) =>
+      canvas.toBlob(resolve, 'image/jpeg', 0.8)
+    );
+    if (!blob) return;
+    const arrayBuffer = await blob.arrayBuffer();
+    const payload = new Uint8Array(arrayBuffer);
+    try {
+      await window.electronAPI.sendFrame(payload);
+    } catch (err) {
+      console.error('Failed to push frame to backend:', err);
+    }
+  }, [cameraActive]);
 
   useEffect(() => {
-    fetchFrame();
-    intervalRef.current = setInterval(fetchFrame, refreshMs);
+    enumerateDevices();
     return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-      }
-      setImgUrl((prev) => {
-        if (prev && prev.startsWith('blob:')) {
-          URL.revokeObjectURL(prev);
-        }
-        return '';
-      });
+      stopCamera();
     };
-  }, [refreshMs, backendUrl]);
+  }, [enumerateDevices, stopCamera]);
+
+  useEffect(() => {
+    if (!cameraActive) return;
+    sendFrame();
+    sendIntervalRef.current = setInterval(sendFrame, SNAPSHOT_INTERVAL_MS);
+    return () => {
+      if (sendIntervalRef.current) {
+        clearInterval(sendIntervalRef.current);
+        sendIntervalRef.current = null;
+      }
+    };
+  }, [cameraActive, sendFrame]);
 
   return (
     <div
@@ -62,24 +157,39 @@ export default function CameraView({ width, backendUrl }: CameraViewProps) {
     >
       <div className="flex items-center gap-3 p-4 bg-dark border-b border-gray-800">
         <h2 className="text-lg font-semibold">Camera Feed</h2>
-        <div className="text-xs text-gray-400">Backend: {backendUrl || 'not set'}</div>
+        <div className="text-xs text-gray-400">
+          Streaming to: {frameEndpoint || 'not configured'}
+        </div>
         <div className="ml-auto flex items-center gap-2">
-          <label className="text-xs text-gray-300">Refresh (ms)</label>
-          <input
-            type="number"
-            min={10}
-            step={10}
-            value={refreshMs}
-            onChange={(e) => setRefreshMs(Math.max(10, Number(e.target.value) || 1000))}
-            className="w-20 px-2 py-1 bg-gray-800 border border-gray-700 rounded text-xs"
-          />
-          <button
-            onClick={fetchFrame}
-            className="btn btn-secondary text-sm"
-            title="Refresh now"
-          >
-            Refresh
-          </button>
+          {devices.length === 0 ? (
+            <button onClick={requestAccess} className="btn btn-primary text-sm">
+              Grant Camera Access
+            </button>
+          ) : (
+            <>
+              <select
+                value={selectedDeviceId}
+                onChange={(e) => setSelectedDeviceId(e.target.value)}
+                className="px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+              >
+                {devices.map((device) => (
+                  <option key={device.deviceId} value={device.deviceId}>
+                    {device.label || `Camera ${device.deviceId.slice(0, 8)}`}
+                  </option>
+                ))}
+              </select>
+
+              {cameraActive ? (
+                <button onClick={stopCamera} className="btn btn-danger text-sm">
+                  Stop Camera
+                </button>
+              ) : (
+                <button onClick={startCamera} className="btn btn-success text-sm" disabled={!selectedDeviceId}>
+                  Start Camera
+                </button>
+              )}
+            </>
+          )}
         </div>
       </div>
 
@@ -89,14 +199,20 @@ export default function CameraView({ width, backendUrl }: CameraViewProps) {
             {error}
           </div>
         )}
-        {imgUrl ? (
-          <img src={imgUrl} alt="Camera frame" className="max-w-full max-h-full object-contain" />
-        ) : (
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted
+          className={`max-w-full max-h-full object-contain ${cameraActive ? 'block' : 'hidden'}`}
+        />
+        {!cameraActive && !error && (
           <div className="text-gray-500 text-center">
-            <div className="text-lg mb-2">Awaiting frame...</div>
-            <p className="text-sm">Ensure the backend camera is running.</p>
+            <div className="text-lg mb-2">Camera inactive</div>
+            <p className="text-sm">Start the camera to display and stream frames.</p>
           </div>
         )}
+        <canvas ref={canvasRef} className="hidden" />
       </div>
     </div>
   );

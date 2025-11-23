@@ -7,11 +7,13 @@ interface ControlBarProps {
   bridgeError: string | null;
   bridgeEndpoint: string;
   backendUrl: string;
+  frameEndpoint: string;
   mockMode: boolean;
   panelUrl: string;
   panelVisible: boolean;
   onSetBridgeEndpoint: (endpoint: string) => void;
   onSetBackendUrl: (url: string) => void;
+  onSetFrameEndpoint: (url: string) => void;
   onToggleMockMode: () => void;
   onMockSetUrl: () => void;
   onPanelUrlChange: (url: string) => void;
@@ -26,11 +28,13 @@ const ControlBar = forwardRef<HTMLDivElement, ControlBarProps>(function ControlB
   bridgeError,
   bridgeEndpoint,
   backendUrl,
+  frameEndpoint,
   mockMode,
   panelUrl,
   panelVisible,
   onSetBridgeEndpoint,
   onSetBackendUrl,
+  onSetFrameEndpoint,
   onToggleMockMode,
   onMockSetUrl,
   onPanelUrlChange,
@@ -42,6 +46,7 @@ ref) {
   const [showSettings, setShowSettings] = useState(false);
   const [endpointInput, setEndpointInput] = useState(bridgeEndpoint);
   const [backendUrlInput, setBackendUrlInput] = useState(backendUrl);
+  const [frameEndpointInput, setFrameEndpointInput] = useState(frameEndpoint);
   const [panelUrlInput, setPanelUrlInput] = useState(panelUrl);
 
   useEffect(() => {
@@ -53,12 +58,20 @@ ref) {
   }, [backendUrl]);
 
   useEffect(() => {
+    setFrameEndpointInput(frameEndpoint);
+  }, [frameEndpoint]);
+
+  useEffect(() => {
     setPanelUrlInput(panelUrl);
   }, [panelUrl]);
 
   const handleSaveEndpoint = () => {
     onSetBridgeEndpoint(endpointInput);
     onSetBackendUrl(backendUrlInput);
+    onSetFrameEndpoint(frameEndpointInput);
+    if (typeof window !== 'undefined' && window.electronAPI?.setFrameEndpoint) {
+      window.electronAPI.setFrameEndpoint(frameEndpointInput);
+    }
     setShowSettings(false);
     onSettingsVisibilityChange(false);
   };
@@ -169,7 +182,7 @@ ref) {
             {/* Backend Base URL */}
             <div className="mb-4">
               <label className="block text-sm font-medium mb-2">
-                MX Backend URL (used for /frame, actions)
+                MX Backend URL (HTTP API)
               </label>
               <input
                 type="text"
@@ -177,6 +190,20 @@ ref) {
                 onChange={(e) => setBackendUrlInput(e.target.value)}
                 className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded focus:outline-none focus:ring-2 focus:ring-primary"
                 placeholder="http://127.0.0.1:8000"
+              />
+            </div>
+
+            {/* Frame Endpoint */}
+            <div className="mb-4">
+              <label className="block text-sm font-medium mb-2">
+                Frame Push Endpoint (ZeroMQ)
+              </label>
+              <input
+                type="text"
+                value={frameEndpointInput}
+                onChange={(e) => setFrameEndpointInput(e.target.value)}
+                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded focus:outline-none focus:ring-2 focus:ring-primary"
+                placeholder="tcp://127.0.0.1:5557"
               />
             </div>
 

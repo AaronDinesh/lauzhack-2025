@@ -9,6 +9,8 @@ declare global {
       detachPanel: () => Promise<{ panelVisible: boolean; panelAttached: boolean }>;
       attachPanel: () => Promise<{ panelVisible: boolean; panelAttached: boolean }>;
       capturePanel: () => Promise<string | null>;
+      sendFrame: (bytes: Uint8Array | ArrayBuffer) => Promise<boolean>;
+      setFrameEndpoint: (endpoint: string) => Promise<string>;
     };
   }
 }

@@ -3,7 +3,7 @@ import os
 import sys
 import threading
 from pathlib import Path
-from time import perf_counter
+from time import perf_counter, time as current_time
 from typing import Optional, Dict, Any, List
 
 from dotenv import load_dotenv
@@ -11,11 +11,18 @@ from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from openai import OpenAI
+import zmq
 
 from audio.recorder import ContinuousRecorder
 from audio.speech_to_text import transcribe_file_sync
 from audio.text_to_speech import speak_text, stop_speech
-from camera.helpers import FrameCache, capture_with_context, capture_frame
+from camera.helpers import (
+    FrameCache,
+    capture_with_context,
+    capture_frame,
+    save_frame_to_logs,
+    build_image_content,
+)
 
 load_dotenv()
 
@@ -61,6 +68,10 @@ EXIT_PHRASES = {
     if phrase.strip()
 }
 CAMERA_INDEX = int(os.getenv("JARVIS_CAMERA_INDEX", "0"))
+FRAME_ZMQ_BIND = os.getenv("FRAME_ZMQ_BIND", "tcp://127.0.0.1:5557")
+
+# Disable local camera frame cache when UI snapshots are arriving via ZeroMQ.
+USE_FRAME_CACHE = os.getenv("USE_FRAME_CACHE", "0").lower() in {"1", "true", "yes"}
 
 client = OpenAI()
 
@@ -73,9 +84,13 @@ if SYSTEM_PROMPT:
         }
     )
 
-frame_cache: FrameCache | None = None  # initialized at startup
+frame_cache: FrameCache | None = None  # initialized at startup if enabled
 _tts_thread_lock = threading.Lock()
 _active_tts_thread: threading.Thread | None = None
+_ui_frame: Dict[str, Any] = {"data": None, "ts": 0.0}
+_zmq_context: Optional[zmq.Context] = None
+_zmq_thread: Optional[threading.Thread] = None
+_zmq_stop = threading.Event()
 
 
 def _extract_first_text(response_dict: Dict[str, Any]) -> str:
@@ -93,15 +108,70 @@ def _log_step_duration(step_name: str, start_time: float) -> float:
     return perf_counter()
 
 
+def _get_ui_frame_bytes(max_age: float = 1.5) -> Optional[bytes]:
+    data = _ui_frame.get("data")
+    ts = _ui_frame.get("ts", 0.0)
+    if data is None:
+        return None
+    if (current_time() - ts) > max_age:
+        return None
+    return data
+
+
+def _frame_listener() -> None:
+    global _zmq_context
+    if not FRAME_ZMQ_BIND:
+        return
+    context = zmq.Context.instance()
+    _zmq_context = context
+    socket = context.socket(zmq.PULL)
+    socket.linger = 0
+    try:
+        socket.bind(FRAME_ZMQ_BIND)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[ZMQ] Failed to bind to {FRAME_ZMQ_BIND}: {exc}", file=sys.stderr)
+        socket.close()
+        return
+
+    poller = zmq.Poller()
+    poller.register(socket, zmq.POLLIN)
+    print(f"[ZMQ] Listening for frames on {FRAME_ZMQ_BIND}")
+
+    try:
+        while not _zmq_stop.is_set():
+            events = dict(poller.poll(500))
+            if socket in events and events[socket] == zmq.POLLIN:
+                try:
+                    parts = socket.recv_multipart(flags=zmq.NOBLOCK)
+                except zmq.Again:
+                    continue
+                if not parts:
+                    continue
+                payload = parts[-1]
+                _ui_frame["data"] = payload
+                _ui_frame["ts"] = current_time()
+    finally:
+        poller.unregister(socket)
+        socket.close()
+
+
 def fetch_frame_with_context(user_text: str) -> tuple[list[dict], Path]:
     """
-    Capture a frame from the local camera (using FrameCache if available) and
-    return OpenAI-ready content plus the saved screenshot path.
+    Capture a frame supplied by the UI (via ZeroMQ) if available, otherwise fall back to
+    the local camera. Returns OpenAI-ready content plus the saved screenshot path.
     """
-    content, screenshot_path = capture_with_context(
-        user_text, camera_index=CAMERA_INDEX, frame_cache=frame_cache
-    )
-    return content, screenshot_path
+    jpeg_bytes = _get_ui_frame_bytes()
+    if jpeg_bytes is None:
+        content, screenshot_path = capture_with_context(
+            user_text,
+            camera_index=CAMERA_INDEX,
+            frame_cache=frame_cache if USE_FRAME_CACHE else None,
+        )
+        return content, screenshot_path
+
+    saved_path = save_frame_to_logs(jpeg_bytes)
+    content = build_image_content(user_text, jpeg_bytes)
+    return content, saved_path
 
 
 def _stream_assistant_text(
@@ -300,23 +370,37 @@ def recording_status() -> Dict[str, Any]:
 
 @app.on_event("startup")
 def _startup() -> None:
-    global frame_cache
-    try:
-        frame_cache = FrameCache(camera_index=CAMERA_INDEX, refresh_interval=0.2)
-        frame_cache.start()
-        frame_cache.wait_until_ready(timeout=3.0)
-        print("[Startup] Frame cache initialized")
-    except Exception as exc:
-        print(f"Frame cache unavailable: {exc}", file=sys.stderr)
-        if frame_cache:
-            frame_cache.stop()
-            frame_cache = None
+    global frame_cache, _zmq_thread
+    if USE_FRAME_CACHE:
+        try:
+            frame_cache = FrameCache(camera_index=CAMERA_INDEX, refresh_interval=0.2)
+            frame_cache.start()
+            frame_cache.wait_until_ready(timeout=3.0)
+            print("[Startup] Frame cache initialized")
+        except Exception as exc:
+            print(f"Frame cache unavailable: {exc}", file=sys.stderr)
+            if frame_cache:
+                frame_cache.stop()
+                frame_cache = None
+
+    if FRAME_ZMQ_BIND:
+        _zmq_stop.clear()
+        _zmq_thread = threading.Thread(target=_frame_listener, name="ui-frame-listener", daemon=True)
+        _zmq_thread.start()
 
 
 @app.on_event("shutdown")
 def _shutdown() -> None:
     if frame_cache:
         frame_cache.stop()
+    _zmq_stop.set()
+    if _zmq_thread:
+        _zmq_thread.join(timeout=1.0)
+    if _zmq_context:
+        try:
+            _zmq_context.term()
+        except Exception:
+            pass
 
 
 # Fake "VLM" / LLM pipeline
@@ -666,6 +750,7 @@ def handle_console_action(action: ConsoleAction):
                 "recording": recording_status(),
             }
 
+        state["mode"] = "processing"
         processing = _process_recording(Path(path))
 
         state["mode"] = "idle"
@@ -703,6 +788,7 @@ def handle_console_action(action: ConsoleAction):
         stop_speech()
         if state["talk_recording_active"]:
             try:
+                state["mode"] = "processing"
                 path = talk_recorder.stop()
                 processing = _process_recording(Path(path))
                 state["last_recording"] = str(path)
@@ -788,11 +874,9 @@ def get_frame():
     """
     Serve the latest camera frame as JPEG for the UI to display.
     """
-    jpeg_bytes = None
-    if frame_cache:
+    jpeg_bytes = _get_ui_frame_bytes(max_age=1.0)
+    if jpeg_bytes is None and frame_cache:
         jpeg_bytes = frame_cache.get_latest_frame(max_age=0.5)
-        
-        print("[Frame] Served frame from cache" if jpeg_bytes else "[Frame] No recent frame in cache")
 
     if jpeg_bytes is None:
         try:

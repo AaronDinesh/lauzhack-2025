@@ -8,4 +8,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   detachPanel: () => ipcRenderer.invoke('panel:detach'),
   attachPanel: () => ipcRenderer.invoke('panel:attach'),
   capturePanel: () => ipcRenderer.invoke('panel:capture'),
+  sendFrame: (bytes) => ipcRenderer.invoke('frame:send', bytes),
+  setFrameEndpoint: (endpoint) => ipcRenderer.invoke('frame:setEndpoint', endpoint),
 });
