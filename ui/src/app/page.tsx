@@ -6,7 +6,7 @@ import CameraView from '@/components/CameraView';
 import WebPanel from '@/components/WebPanel';
 import ControlBar from '@/components/ControlBar';
 import StatusDock, { StatusItem } from '@/components/StatusDock';
-import { useMXBridge } from '@/hooks/useMXBridge';
+import { useMXBridge, SegmentationEventPayload } from '@/hooks/useMXBridge';
 
 export default function Home() {
   const sanitizeUrl = (value?: string) => {
@@ -162,6 +162,8 @@ export default function Home() {
       setBridgeEndpoint(endpoint);
       pushStatus({ label: 'Bridge endpoint updated', detail: endpoint, tone: 'info' });
     },
+    onSegmentationData: handleSegmentationData,
+    onSegmentationVisible: handleSegmentationVisible,
   });
 
   const handleMockSetUrl = useCallback(() => {
@@ -174,6 +176,10 @@ export default function Home() {
   const [panelDetachedForSettings, setPanelDetachedForSettings] = useState(false);
   const [statusItems, setStatusItems] = useState<StatusItem[]>([]);
   const [isRecording, setIsRecording] = useState(false);
+  const [segmentationData, setSegmentationData] = useState<SegmentationEventPayload | null>(null);
+  const [segmentationVisible, setSegmentationVisible] = useState(false);
+  const [segmentationLoading, setSegmentationLoading] = useState(false);
+  const [segmentationError, setSegmentationError] = useState<string | null>(null);
   const statusPollRef = useRef<NodeJS.Timeout | null>(null);
   const lastModeRef = useRef<string | null>(null);
   const lastTranscriptRef = useRef<string | null>(null);
@@ -191,6 +197,98 @@ export default function Home() {
     });
     pendingDelta.current = 0; // reset after sending
   }, 100); // 100 ms debounce
+
+  const normalizeSegmentationPayload = useCallback((raw?: any): SegmentationEventPayload | null => {
+    if (!raw || typeof raw !== 'object') {
+      return null;
+    }
+    return {
+      prompt: raw.prompt,
+      imageData: raw.imageData || raw.image_data,
+      numObjects: raw.numObjects ?? raw.num_objects,
+      scores: raw.scores,
+      timestamp: raw.timestamp,
+    };
+  }, []);
+
+  const fetchLatestSegmentation = useCallback(async () => {
+    if (!backendUrl || !backendUrl.trim()) {
+      return null;
+    }
+    setSegmentationLoading(true);
+    setSegmentationError(null);
+    try {
+      const res = await fetch(`${backendUrl.replace(/\/$/, '')}/segmentation/latest`);
+      if (!res.ok) {
+        if (res.status === 404) {
+          setSegmentationData(null);
+          return null;
+        }
+        throw new Error(`Failed to fetch segmentation (${res.status})`);
+      }
+      const json = await res.json();
+      const normalized = normalizeSegmentationPayload(json);
+      setSegmentationData(normalized);
+      return normalized;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to load segmentation overlay.';
+      setSegmentationError(message);
+      return null;
+    } finally {
+      setSegmentationLoading(false);
+    }
+  }, [backendUrl, normalizeSegmentationPayload]);
+
+  const sendSegmentationToggle = useCallback(
+    async (forceValue?: boolean) => {
+      if (!backendUrl || !backendUrl.trim()) {
+        return;
+      }
+      try {
+        const payload: Record<string, any> = { action: 'toggle_segmentation_overlay' };
+        if (typeof forceValue === 'boolean') {
+          payload.value = forceValue ? 1 : 0;
+        }
+        await fetch(`${backendUrl.replace(/\/$/, '')}/console/action`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      } catch (err) {
+        console.error('Failed to toggle segmentation overlay:', err);
+        setSegmentationError('Unable to toggle segmentation overlay.');
+      }
+    },
+    [backendUrl]
+  );
+
+  const handleSegmentationData = useCallback(
+    (payload: SegmentationEventPayload) => {
+      const normalized = normalizeSegmentationPayload(payload);
+      if (!normalized) return;
+      setSegmentationData(normalized);
+      setSegmentationError(null);
+    },
+    [normalizeSegmentationPayload]
+  );
+
+  const handleSegmentationVisible = useCallback(
+    (visible: boolean) => {
+      setSegmentationVisible(visible);
+      if (visible && !segmentationData) {
+        void fetchLatestSegmentation();
+      }
+    },
+    [fetchLatestSegmentation, segmentationData]
+  );
+
+  const handleSegmentationButton = useCallback(() => {
+    void sendSegmentationToggle(segmentationVisible ? false : true);
+  }, [segmentationVisible, sendSegmentationToggle]);
+
+  const handleSegmentationClose = useCallback(() => {
+    void sendSegmentationToggle(false);
+  }, [sendSegmentationToggle]);
 
   const pushStatus = useCallback(
     (item: Omit<StatusItem, 'id' | 'ts'> & { id?: string; ts?: number }) => {
@@ -262,6 +360,18 @@ export default function Home() {
               Math.abs(prev - data.workspace_split) < 0.1 ? prev : data.workspace_split
             );
           }
+          if (typeof data.segmentation_visible === 'boolean') {
+            setSegmentationVisible((prev) =>
+              data.segmentation_visible === prev ? prev : data.segmentation_visible
+            );
+          }
+          if (data.segmentation_available) {
+            if (!segmentationData && !segmentationLoading) {
+              void fetchLatestSegmentation();
+            }
+          } else if (segmentationData) {
+            setSegmentationData(null);
+          }
         }
       } catch (err) {
         console.error('Failed to fetch status:', err);
@@ -275,7 +385,7 @@ export default function Home() {
         clearInterval(statusPollRef.current);
       }
     };
-  }, [backendUrl, pushStatus]);
+  }, [backendUrl, fetchLatestSegmentation, pushStatus, segmentationData, segmentationLoading]);
 
   const handleSettingsVisibilityChange = useCallback(
     (open: boolean) => {
@@ -434,6 +544,56 @@ export default function Home() {
           </>
         )}
       </div>
+
+      {segmentationData && !segmentationVisible && (
+        <button
+          className="btn btn-primary fixed bottom-6 right-6 z-[9300] shadow-lg"
+          onClick={handleSegmentationButton}
+          disabled={segmentationLoading}
+        >
+          {segmentationLoading ? 'Preparing overlay...' : 'Show Segmentation'}
+        </button>
+      )}
+
+      {segmentationVisible && (
+        <div className="fixed inset-0 z-[9600] flex items-center justify-center px-4">
+          <div className="absolute inset-0 bg-black/70" onClick={handleSegmentationClose} />
+          <div className="relative z-[9601] w-[min(900px,100%)] max-h-[90vh] bg-gray-900 border border-gray-700 rounded-2xl shadow-2xl overflow-hidden pointer-events-auto">
+            <div className="flex items-start justify-between gap-4 px-6 py-4 border-b border-gray-800">
+              <div>
+                <div className="text-xs uppercase tracking-wide text-gray-400">Segmentation</div>
+                <div className="text-lg font-semibold">{segmentationData?.prompt || 'Latest overlay'}</div>
+                <div className="text-sm text-gray-400">
+                  {segmentationData?.numObjects != null
+                    ? `${segmentationData.numObjects} object${segmentationData.numObjects === 1 ? '' : 's'} detected`
+                    : 'Awaiting detection results'}
+                </div>
+              </div>
+              <button className="btn btn-secondary" onClick={handleSegmentationClose}>
+                Close
+              </button>
+            </div>
+            <div className="p-6 overflow-y-auto bg-black/20">
+              {segmentationLoading ? (
+                <div className="text-center text-gray-300 py-8">Loading segmentation overlay...</div>
+              ) : segmentationData?.imageData ? (
+                <img
+                  src={segmentationData.imageData}
+                  alt={segmentationData?.prompt || 'Segmentation overlay'}
+                  className="w-full rounded-xl border border-gray-800 object-contain"
+                />
+              ) : (
+                <div className="text-center text-gray-400 py-8">
+                  No segmentation image available yet. Trigger the tool from Jarvis to generate one.
+                </div>
+              )}
+              {segmentationError && (
+                <div className="mt-4 text-sm text-red-400 text-center">{segmentationError}</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {settingsOpen && (
         <div className="fixed inset-0 z-[9500] bg-black/60 pointer-events-auto" />
