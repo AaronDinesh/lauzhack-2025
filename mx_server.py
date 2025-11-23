@@ -698,9 +698,9 @@ def _summarize_resources(resource_slots: Dict[str, Dict[str, Any]]) -> str:
     if not resource_slots:
         return ""
     parts: List[str] = []
-        for slot, cfg in resource_slots.items():
-            label = cfg.get("label", slot)
-            parts.append(f"{slot}: {label}")
+    for slot, cfg in resource_slots.items():
+        label = cfg.get("label", slot)
+        parts.append(f"{slot}: {label}")
     return "I've put resources on your keypad — " + "; ".join(parts) + "."
 
 
@@ -842,21 +842,15 @@ def handle_console_action(action: ConsoleAction):
             "note": f"scroll tick={action.value}",
         }
         broadcast_event({"type": "scroll_component", "payload": {"value": action.value}})
-        return response
-
     elif action.action == "resize_panel":
+        # The dial sends a delta (positive = make panel larger, negative = shrink)
         delta = action.value or 0
-        current = float(state.get("workspace_split", 70))
-        new_value = int(min(max(current + delta * 1, 30), 85))
-        state["workspace_split"] = new_value
-        response = {
-            "status": "ok",
-            "mode": state["mode"],
-            "workspace_split": new_value,
-        }
-        broadcast_event({"type": "setLayout", "payload": {"workspaceSplit": new_value}})
-        return response
-
+        # Adjust workspace split directly, keep within 20-80 bounds
+        new_split = max(20, min(80, state.get("workspace_split", 70) + delta))
+        state["workspace_split"] = new_split
+        # Broadcast layout change for UI update
+        broadcast_event({"type": "setLayout", "payload": {"workspaceSplit": new_split}})
+        return {"status": "ok", "workspace_split": new_split}
     # Fallback
     return {"status": "ok", "mode": state["mode"]}
 

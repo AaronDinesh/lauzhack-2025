@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useDebouncedCallback } from 'use-debounce';
 import CameraView from '@/components/CameraView';
 import WebPanel from '@/components/WebPanel';
 import ControlBar from '@/components/ControlBar';
@@ -125,12 +126,33 @@ export default function Home() {
     },
     onSetLayout: (layout: { dockSide?: 'left' | 'right'; workspaceSplit?: number }) => {
       if (layout.dockSide) setDockSide(layout.dockSide);
-      if (layout.workspaceSplit) setWorkspaceSplit(layout.workspaceSplit);
-      pushStatus({
-        label: 'Layout updated',
-        detail: `Dock: ${layout.dockSide || dockSide}, Camera: ${layout.workspaceSplit ?? workspaceSplit}%`,
-        tone: 'info',
-      });
+
+      // Handle workspace split with smooth resizing
+      if (typeof layout.workspaceSplit === 'number') {
+        // Calculate delta from current position
+        const currentSplit = workspaceSplit;
+        const rawDelta = layout.workspaceSplit - currentSplit;
+
+        // Clamp each update to ±5% to avoid big jumps
+        const clampedDelta = Math.max(-5, Math.min(5, rawDelta));
+        pendingDelta.current += clampedDelta;
+
+        // Update UI instantly for smooth feel
+        setWorkspaceSplit(prev => {
+          const newVal = Math.max(20, Math.min(80, prev + clampedDelta));
+
+          // Also inform the Electron host (if present)
+          if (isElectron && panelVisible && window.electronAPI?.resizePanel) {
+            const clamped = Math.min(Math.max(newVal / 100, 0.2), 0.8);
+            window.electronAPI.resizePanel(1 - clamped, controlBarHeight);
+          }
+
+          return newVal;
+        });
+
+        // Debounced request to backend
+        debounceSend();
+      }
     },
     onSetMockMode: (enabled: boolean) => {
       setMockMode(enabled);
@@ -156,6 +178,19 @@ export default function Home() {
   const lastModeRef = useRef<string | null>(null);
   const lastTranscriptRef = useRef<string | null>(null);
   const lastResponseRef = useRef<string | null>(null);
+  const pendingDelta = useRef(0); // accumulated dial delta for smooth resizing
+
+  // Debounced callback to send accumulated resize delta to backend
+  const debounceSend = useDebouncedCallback(() => {
+    if (pendingDelta.current === 0) return;
+    // Send a single resize_panel action with the accumulated delta
+    fetch(`${backendUrl.replace(/\/$/, '')}/console/action`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'resize_panel', value: pendingDelta.current }),
+    });
+    pendingDelta.current = 0; // reset after sending
+  }, 100); // 100 ms debounce
 
   const pushStatus = useCallback(
     (item: Omit<StatusItem, 'id' | 'ts'> & { id?: string; ts?: number }) => {
@@ -255,7 +290,7 @@ export default function Home() {
           void window.electronAPI
             .capturePanel()
             .then((snapshot) => snapshot && setPanelSnapshot(snapshot))
-            .catch(() => {});
+            .catch(() => { });
         } else {
           setPanelWasVisibleBeforeSettings(false);
         }
@@ -336,13 +371,13 @@ export default function Home() {
         className="grid flex-1 overflow-hidden"
         ref={workspaceRef}
         style={{
-      gridTemplateColumns: panelVisible
+          gridTemplateColumns: panelVisible
             ? dockSide === 'left'
               ? `calc(${100 - workspaceSplit}% - ${HANDLE_WIDTH}px) ${HANDLE_WIDTH}px ${workspaceSplit}%`
               : `${workspaceSplit}% ${HANDLE_WIDTH}px calc(${100 - workspaceSplit}% - ${HANDLE_WIDTH}px)`
             : '100%',
-    }}
-  >
+        }}
+      >
         {dockSide === 'left' && panelVisible && (
           <>
             {!isElectron ? (
