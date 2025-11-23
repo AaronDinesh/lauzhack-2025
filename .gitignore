@@ -1,3 +1,8 @@
+# yolo training
+runs/
+yolo_pc_part/training_dataset
+*.pt
+
 # image formats
 *.png
 *.jpg
