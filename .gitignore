@@ -1,3 +1,16 @@
+# yolo training
+runs/
+yolo_pc_part/training_dataset
+*.pt
+
+# image formats
+*.png
+*.jpg
+*.jpeg
+
+# sam
+*.safetensors
+
 uv.lock
 node_modules/
 # Keep Electron/Next workspace modules out of git
