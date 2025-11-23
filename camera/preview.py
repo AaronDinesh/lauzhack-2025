@@ -13,6 +13,9 @@ import sys
 from typing import List
 
 import cv2  # type: ignore
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 def list_cameras(max_index: int) -> List[int]:
@@ -53,9 +56,7 @@ def show_stream(camera_index: int) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="List connected cameras and preview a live feed."
-    )
+    parser = argparse.ArgumentParser(description="List connected cameras and preview a live feed.")
     parser.add_argument(
         "--max-index",
         type=int,
@@ -102,4 +103,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
