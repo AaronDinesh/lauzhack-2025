@@ -1,18 +1,24 @@
-uv.lock
-.python-version
-.DS_Store
-.idea/
-.vscode/
-/node_modules
-/dist
-/build
-/tmp
-.pytest_cache/
-coverage/
-*.log
-*.tmp
-*.swp
+# yolo training
+runs/
+yolo_pc_part/training_dataset
+*.pt
 
+# image formats
+*.png
+*.jpg
+*.jpeg
+
+# sam
+*.safetensors
+
+uv.lock
+node_modules/
+# Keep Electron/Next workspace modules out of git
+ui/node_modules/
+.next/
+# Build outputs from UI/Electron
+ui/out/
+ui/dist-electron/
 # audio files
 *.mp3
 *.m4a
@@ -37,7 +43,6 @@ lib/
 lib64/
 parts/
 sdist/
-.next/
 var/
 wheels/
 share/python-wheels/
@@ -202,9 +207,9 @@ cython_debug/
 .abstra/
 
 # Visual Studio Code
-#  Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore
+#  Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore 
 #  that can be found at https://github.com/github/gitignore/blob/main/Global/VisualStudioCode.gitignore
-#  and can be added to the global gitignore or merged into this file. However, if you prefer,
+#  and can be added to the global gitignore or merged into this file. However, if you prefer, 
 #  you could uncomment the following to ignore the entire vscode folder
 # .vscode/
 
