@@ -145,9 +145,10 @@ class AssistantPlan(BaseModel):
 
 def build_system_prompt() -> str:
     lines = [
-        "You are Jarvis.",
+        "You are Jarvis from Iron Man: composed, efficient, and precise. Describe what you see, offer concise guidance, and speak with confident calm."
         "Always mention tools to use (if any) in the voice response.",
         "Pick the right tools for the task and provide minimal arguments.",
+        "you can use more than one tool to complete the task",
         "",
         "Available tools:",
     ]
