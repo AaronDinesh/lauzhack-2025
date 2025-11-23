@@ -7,14 +7,14 @@ from time import perf_counter
 from typing import Optional, Dict, Any, List
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from pydantic import BaseModel
 from openai import OpenAI
 
 from audio.recorder import ContinuousRecorder
 from audio.speech_to_text import transcribe_file_sync
 from audio.text_to_speech import speak_text, stop_speech
-from camera.helpers import FrameCache, capture_with_context
+from camera.helpers import FrameCache, capture_with_context, capture_frame
 
 load_dotenv()
 
@@ -49,7 +49,6 @@ EXIT_PHRASES = {
     if phrase.strip()
 }
 CAMERA_INDEX = int(os.getenv("JARVIS_CAMERA_INDEX", "0"))
-FRAME_REFRESH = float(os.getenv("FRAME_CACHE_REFRESH", "0.5"))
 
 client = OpenAI()
 
@@ -62,7 +61,7 @@ if SYSTEM_PROMPT:
         }
     )
 
-frame_cache: FrameCache | None = None
+frame_cache: FrameCache | None = None  # initialized at startup
 _tts_thread_lock = threading.Lock()
 _active_tts_thread: threading.Thread | None = None
 
@@ -80,6 +79,17 @@ def _log_step_duration(step_name: str, start_time: float) -> float:
     elapsed = perf_counter() - start_time
     print(f"[Pipeline] {step_name} took {elapsed:.2f}s")
     return perf_counter()
+
+
+def fetch_frame_with_context(user_text: str) -> tuple[list[dict], Path]:
+    """
+    Capture a frame from the local camera (using FrameCache if available) and
+    return OpenAI-ready content plus the saved screenshot path.
+    """
+    content, screenshot_path = capture_with_context(
+        user_text, camera_index=CAMERA_INDEX, frame_cache=frame_cache
+    )
+    return content, screenshot_path
 
 
 def _stream_assistant_text(
@@ -173,12 +183,8 @@ def _process_recording(audio_path: Path) -> Dict[str, Any]:
         return {"status": "ok", "transcript": transcript, "message": "Exit phrase detected."}
 
     try:
-        content, screenshot_path = capture_with_context(
-            transcript,
-            camera_index=CAMERA_INDEX,
-            frame_cache=frame_cache,
-        )
-        step_start = _log_step_duration("capture_with_context", step_start)
+        content, screenshot_path = fetch_frame_with_context(transcript)
+        step_start = _log_step_duration("fetch_frame_with_context", step_start)
         print(f"[Pipeline] Captured screenshot at {screenshot_path}")
     except Exception as exc:
         return {
@@ -235,27 +241,6 @@ def _process_recording(audio_path: Path) -> Dict[str, Any]:
     return result
 
 
-@app.on_event("startup")
-def _startup() -> None:
-    global frame_cache
-    try:
-        frame_cache = FrameCache(camera_index=CAMERA_INDEX, refresh_interval=FRAME_REFRESH)
-        frame_cache.start()
-        frame_cache.wait_until_ready(timeout=3.0)
-        print("[Startup] Frame cache initialized")
-    except Exception as exc:
-        print(f"Frame cache unavailable: {exc}", file=sys.stderr)
-        if frame_cache:
-            frame_cache.stop()
-            frame_cache = None
-
-
-@app.on_event("shutdown")
-def _shutdown() -> None:
-    if frame_cache:
-        frame_cache.stop()
-
-
 class RecordingController:
     """
     Lightweight thread-safe wrapper around ContinuousRecorder for the server.
@@ -299,6 +284,27 @@ def recording_status() -> Dict[str, Any]:
         "recording": talk_recorder.is_recording(),
         "path": str(current) if current else None,
     }
+
+
+@app.on_event("startup")
+def _startup() -> None:
+    global frame_cache
+    try:
+        frame_cache = FrameCache(camera_index=CAMERA_INDEX, refresh_interval=0.2)
+        frame_cache.start()
+        frame_cache.wait_until_ready(timeout=3.0)
+        print("[Startup] Frame cache initialized")
+    except Exception as exc:
+        print(f"Frame cache unavailable: {exc}", file=sys.stderr)
+        if frame_cache:
+            frame_cache.stop()
+            frame_cache = None
+
+
+@app.on_event("shutdown")
+def _shutdown() -> None:
+    if frame_cache:
+        frame_cache.stop()
 
 
 # Fake "VLM" / LLM pipeline
@@ -385,15 +391,9 @@ def analyse_scene_with_vlm() -> Dict[str, Any]:
     Real VLM call: capture a frame and ask the model for structured components/resources.
     Falls back to stub on failure.
     """
-    if frame_cache is None:
-        print("[VLM] Frame cache not initialized; falling back to stub", file=sys.stderr)
-        return analyse_scene_with_vlm_stub()
-
     # Capture image + recent conversation context; description drives the vision call.
-    content, screenshot_path = capture_with_context(
-        "Identify visible PC components and propose manuals/videos.",
-        camera_index=CAMERA_INDEX,
-        frame_cache=frame_cache,
+    content, screenshot_path = fetch_frame_with_context(
+        "Identify visible PC components and propose manuals/videos."
     )
     print(f"[VLM] Captured screenshot for analysis at {screenshot_path}")
 
@@ -755,3 +755,25 @@ def handle_console_action(action: ConsoleAction):
 
     # Fallback
     return {"status": "ok", "mode": state["mode"]}
+
+
+@app.get("/frame")
+def get_frame():
+    """
+    Serve the latest camera frame as JPEG for the UI to display.
+    """
+    jpeg_bytes = None
+    if frame_cache:
+        jpeg_bytes = frame_cache.get_latest_frame(max_age=0.5)
+
+    if jpeg_bytes is None:
+        try:
+            jpeg_bytes = capture_frame(camera_index=CAMERA_INDEX)
+        except Exception as exc:  # noqa: BLE001
+            return Response(
+                content=f"Failed to capture frame: {exc}",
+                media_type="text/plain",
+                status_code=500,
+            )
+
+    return Response(content=jpeg_bytes, media_type="image/jpeg")

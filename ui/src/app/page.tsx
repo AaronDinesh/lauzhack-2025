@@ -4,6 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import CameraView from '@/components/CameraView';
 import WebPanel from '@/components/WebPanel';
 import ControlBar from '@/components/ControlBar';
+import StatusDock, { StatusItem } from '@/components/StatusDock';
 import { useMXBridge } from '@/hooks/useMXBridge';
 
 export default function Home() {
@@ -94,22 +95,32 @@ export default function Home() {
   const { connected, error: bridgeError } = useMXBridge(bridgeEndpoint, {
     onSetUrl: (url: string) => {
       showPanelWithUrl(url);
+      pushStatus({ label: 'Opening resource', detail: url, tone: 'info' });
     },
     onTogglePanel: () => {
       togglePanelVisibility();
+      pushStatus({ label: panelVisible ? 'Hiding panel' : 'Showing panel', tone: 'info' });
     },
     onTriggerStep: (step: string) => {
       console.log('[MX Action] Trigger step:', step);
+      handleStepStatus(step);
     },
     onSetLayout: (layout: { dockSide?: 'left' | 'right'; workspaceSplit?: number }) => {
       if (layout.dockSide) setDockSide(layout.dockSide);
       if (layout.workspaceSplit) setWorkspaceSplit(layout.workspaceSplit);
+      pushStatus({
+        label: 'Layout updated',
+        detail: `Dock: ${layout.dockSide || dockSide}, Camera: ${layout.workspaceSplit ?? workspaceSplit}%`,
+        tone: 'info',
+      });
     },
     onSetMockMode: (enabled: boolean) => {
       setMockMode(enabled);
+      pushStatus({ label: 'Mock mode', detail: enabled ? 'Enabled' : 'Disabled', tone: enabled ? 'warning' : 'info' });
     },
     onSetBridgeEndpoint: (endpoint: string) => {
       setBridgeEndpoint(endpoint);
+      pushStatus({ label: 'Bridge endpoint updated', detail: endpoint, tone: 'info' });
     },
   });
 
@@ -121,6 +132,45 @@ export default function Home() {
   const [panelWasVisibleBeforeSettings, setPanelWasVisibleBeforeSettings] = useState(false);
   const [panelSnapshot, setPanelSnapshot] = useState<string | null>(null);
   const [panelDetachedForSettings, setPanelDetachedForSettings] = useState(false);
+  const [statusItems, setStatusItems] = useState<StatusItem[]>([]);
+  const [isRecording, setIsRecording] = useState(false);
+
+  const pushStatus = useCallback(
+    (item: Omit<StatusItem, 'id' | 'ts'> & { id?: string; ts?: number }) => {
+      setStatusItems((prev) => {
+        const id = item.id || `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+        const ts = item.ts || Date.now();
+        return [{ ...item, id, ts }, ...prev].slice(0, 15);
+      });
+    },
+    []
+  );
+
+  const handleStepStatus = useCallback(
+    (step: string) => {
+      const normalized = step.toLowerCase();
+
+      if (normalized.includes('talk_start') || normalized === 'talk_start') {
+        setIsRecording(true);
+        pushStatus({ label: 'Recording…', tone: 'warning' });
+        return;
+      }
+
+      if (normalized.includes('talk_stop') || normalized === 'talk_stop') {
+        setIsRecording(false);
+        pushStatus({ label: 'Stopped recording', tone: 'info' });
+        return;
+      }
+
+      if (normalized.startsWith('resource_')) {
+        pushStatus({ label: 'Opening resource', detail: normalized, tone: 'success' });
+        return;
+      }
+
+      pushStatus({ label: step, tone: 'info' });
+    },
+    [pushStatus]
+  );
 
   const handleSettingsVisibilityChange = useCallback(
     (open: boolean) => {
@@ -279,6 +329,12 @@ export default function Home() {
       {settingsOpen && (
         <div className="fixed inset-0 z-[9500] bg-black/60 pointer-events-auto" />
       )}
+
+      <StatusDock
+        items={statusItems}
+        recording={isRecording}
+        onClear={() => setStatusItems([])}
+      />
     </div>
   );
 }
