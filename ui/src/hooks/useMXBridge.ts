@@ -1,7 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 
 export interface MXAction {
-  type: 'setUrl' | 'togglePanel' | 'triggerStep' | 'setLayout' | 'setMockMode' | 'setBridgeEndpoint';
+  type:
+    | 'setUrl'
+    | 'togglePanel'
+    | 'triggerStep'
+    | 'setLayout'
+    | 'setMockMode'
+    | 'setBridgeEndpoint'
+    | 'resources';
   payload?: any;
 }
 
@@ -12,6 +19,7 @@ interface MXBridgeCallbacks {
   onSetLayout?: (layout: { dockSide?: 'left' | 'right'; workspaceSplit?: number }) => void;
   onSetMockMode?: (enabled: boolean) => void;
   onSetBridgeEndpoint?: (endpoint: string) => void;
+  onResources?: (resources: Record<string, { label: string; url: string; icon?: string }>) => void;
 }
 
 export function useMXBridge(endpoint: string | undefined, callbacks: MXBridgeCallbacks) {
@@ -94,6 +102,11 @@ export function useMXBridge(endpoint: string | undefined, callbacks: MXBridgeCal
               case 'setBridgeEndpoint':
                 if (callbacks.onSetBridgeEndpoint && action.payload?.endpoint) {
                   callbacks.onSetBridgeEndpoint(action.payload.endpoint);
+                }
+                break;
+              case 'resources':
+                if (callbacks.onResources && action.payload) {
+                  callbacks.onResources(action.payload);
                 }
                 break;
               default:

@@ -824,6 +824,18 @@ def handle_console_action(action: ConsoleAction):
         if not resource:
             return {"status": "error", "error": f"no resource mapped for {slot}"}
 
+        broadcast_event(
+            {
+                "type": "setUrl",
+                "payload": {
+                    "slot": slot,
+                    "label": resource.get("label", slot),
+                    "icon": resource.get("icon", "link"),
+                    "url": resource["url"],
+                },
+            }
+        )
+
         # Frontend / launcher can use this URL to open manual / video / file.
         return {
             "status": "ok",

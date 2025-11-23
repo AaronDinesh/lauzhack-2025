@@ -1,6 +1,5 @@
 // src/test-actions.js
 import { CommandAction, AdjustmentAction } from '@logitech/plugin-sdk';
-import { exec } from 'node:child_process';
 
 const BACKEND_URL = 'http://localhost:8000/console/action';
 
@@ -29,22 +28,6 @@ function logButtonsMetadata(result) {
     console.log('Buttons for current scene:', result.buttons);
     // TODO: Update key labels/icons dynamically when SDK runtime updates are available.
   }
-}
-
-function openUrl(url) {
-  if (!url) return;
-  const command =
-    process.platform === 'win32'
-      ? `cmd /c start "" "${url}"`
-      : process.platform === 'darwin'
-      ? `open "${url}"`
-      : `xdg-open "${url}"`;
-
-  exec(command, (err) => {
-    if (err) {
-      console.error('Failed to open URL:', url, err);
-    }
-  });
 }
 
 // Talk toggle (single key)
@@ -102,10 +85,8 @@ export class Resource1Action extends CommandAction {
       action: 'resource_1',
     });
     console.log('Resource 1 result:', result);
-    // result.url contains manual/video URL. Your UI can use this.
     if (result && result.url) {
-      console.log('Opening Resource 1 URL:', result.url);
-      openUrl(result.url);
+      console.log('Resource 1 URL ready for UI:', result.url);
     }
   }
 }
@@ -127,8 +108,7 @@ export class Resource2Action extends CommandAction {
     });
     console.log('Resource 2 result:', result);
     if (result && result.url) {
-      console.log('Opening Resource 2 URL:', result.url);
-      openUrl(result.url);
+      console.log('Resource 2 URL ready for UI:', result.url);
     }
   }
 }
@@ -150,8 +130,7 @@ export class Resource3Action extends CommandAction {
     });
     console.log('Resource 3 result:', result);
     if (result && result.url) {
-      console.log('Opening Resource 3 URL:', result.url);
-      openUrl(result.url);
+      console.log('Resource 3 URL ready for UI:', result.url);
     }
   }
 }
@@ -173,8 +152,7 @@ export class Resource4Action extends CommandAction {
     });
     console.log('Resource 4 result:', result);
     if (result && result.url) {
-      console.log('Opening Resource 4 URL:', result.url);
-      openUrl(result.url);
+      console.log('Resource 4 URL ready for UI:', result.url);
     }
   }
 }

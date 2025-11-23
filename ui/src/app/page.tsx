@@ -7,6 +7,8 @@ import ControlBar from '@/components/ControlBar';
 import StatusDock, { StatusItem } from '@/components/StatusDock';
 import { useMXBridge } from '@/hooks/useMXBridge';
 
+type ResourceSlotMap = Record<string, { label: string; url: string; icon?: string }>;
+
 export default function Home() {
   const sanitizeUrl = (value?: string) => {
     const trimmed = value?.trim();
@@ -34,6 +36,41 @@ export default function Home() {
   const controlBarRef = useRef<HTMLDivElement>(null);
   const HANDLE_WIDTH = 8; // px
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [statusItems, setStatusItems] = useState<StatusItem[]>([]);
+  const [isRecording, setIsRecording] = useState(false);
+  const statusPollRef = useRef<NodeJS.Timeout | null>(null);
+  const lastModeRef = useRef<string | null>(null);
+  const lastTranscriptRef = useRef<string | null>(null);
+  const lastResponseRef = useRef<string | null>(null);
+  const latestResourcesRef = useRef<ResourceSlotMap>({});
+
+  const pushStatus = useCallback(
+    (item: Omit<StatusItem, 'id' | 'ts'> & { id?: string; ts?: number }) => {
+      setStatusItems((prev) => {
+        const id = item.id || `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+        const ts = item.ts || Date.now();
+        return [{ ...item, id, ts }, ...prev].slice(0, 15);
+      });
+    },
+    []
+  );
+
+  const handleResources = useCallback(
+    (slots: ResourceSlotMap) => {
+      const normalized = slots || {};
+      latestResourcesRef.current = normalized;
+      const entries = Object.entries(normalized);
+      if (!entries.length) {
+        pushStatus({ label: 'Resources cleared', tone: 'info' });
+        return;
+      }
+      const summary = entries
+        .map(([slot, cfg]) => `${slot}: ${cfg.label || cfg.url}`)
+        .join(' | ');
+      pushStatus({ label: 'Resources updated', detail: summary, tone: 'info' });
+    },
+    [pushStatus]
+  );
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -140,6 +177,7 @@ export default function Home() {
       setBridgeEndpoint(endpoint);
       pushStatus({ label: 'Bridge endpoint updated', detail: endpoint, tone: 'info' });
     },
+    onResources: handleResources,
   });
 
   const handleMockSetUrl = useCallback(() => {
@@ -150,23 +188,6 @@ export default function Home() {
   const [panelWasVisibleBeforeSettings, setPanelWasVisibleBeforeSettings] = useState(false);
   const [panelSnapshot, setPanelSnapshot] = useState<string | null>(null);
   const [panelDetachedForSettings, setPanelDetachedForSettings] = useState(false);
-  const [statusItems, setStatusItems] = useState<StatusItem[]>([]);
-  const [isRecording, setIsRecording] = useState(false);
-  const statusPollRef = useRef<NodeJS.Timeout | null>(null);
-  const lastModeRef = useRef<string | null>(null);
-  const lastTranscriptRef = useRef<string | null>(null);
-  const lastResponseRef = useRef<string | null>(null);
-
-  const pushStatus = useCallback(
-    (item: Omit<StatusItem, 'id' | 'ts'> & { id?: string; ts?: number }) => {
-      setStatusItems((prev) => {
-        const id = item.id || `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
-        const ts = item.ts || Date.now();
-        return [{ ...item, id, ts }, ...prev].slice(0, 15);
-      });
-    },
-    []
-  );
 
   const handleStepStatus = useCallback(
     (step: string) => {
