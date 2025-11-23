@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import threading
 import urllib.parse
 import urllib.request
@@ -52,6 +53,7 @@ class ToolExecutor:
         self.model = model
         self.max_web_results = max_web_results
         self.ifixit_limit = ifixit_limit
+        self.backend_url = os.environ.get("MX_BACKEND_URL", "http://127.0.0.1:8000")
         self._loop = asyncio.new_event_loop()
         self._client = AsyncOpenAI()
         self._thread = threading.Thread(target=self._loop.run_forever, daemon=True)
@@ -158,11 +160,57 @@ class ToolExecutor:
                         collected[query].append(data)
                     else:
                         collected[query] = [data]
+            self._update_resource_buttons(results)
         
         if status_callback:
             status_callback("Tools finished.")
             
         return collected
+
+    def _update_resource_buttons(self, results: List[Tuple[str, Any]]) -> None:
+        resources: List[Dict[str, str]] = []
+        for query, data in results:
+            if isinstance(data, list):
+                for item in data:
+                    if isinstance(item, str):
+                        resources.append({"label": f"{query[:20]} link", "url": item})
+                    elif isinstance(item, dict):
+                        url = item.get("url")
+                        if not url:
+                            continue
+                        label = item.get("title") or item.get("name") or url
+                        resources.append({"label": label, "url": url})
+            elif isinstance(data, dict):
+                url = data.get("url")
+                if url:
+                    resources.append({"label": data.get("title") or url, "url": url})
+        resources = [r for r in resources if r.get("url")]  # ensure url exists
+        resources = resources[:3]
+        if not resources:
+            return
+        payload = {
+            "resources": [
+                {
+                    "label": (item["label"] or f"Resource {idx + 1}")[:60],
+                    "url": item["url"],
+                    "icon": "link",
+                }
+                for idx, item in enumerate(resources)
+            ]
+        }
+        url = urllib.parse.urljoin(self.backend_url.rstrip("/") + "/", "resources/update")
+        try:
+            urllib.request.urlopen(
+                urllib.request.Request(
+                    url,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                ),
+                timeout=5,
+            )
+            print(f"[ToolExecutor] Updated {len(payload['resources'])} resource buttons.")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[ToolExecutor] Failed to update resource buttons: {exc}")
 
     def submit(self, plan: AssistantPlan, screenshot_path: str = None, status_callback=None) -> None:
         """Fire-and-forget execution of tool calls."""

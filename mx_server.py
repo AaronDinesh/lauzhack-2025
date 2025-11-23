@@ -48,6 +48,14 @@ class ConsoleAction(BaseModel):
     action: str
     value: Optional[int] = None
 
+class ResourceItem(BaseModel):
+    label: str
+    url: str
+    icon: Optional[str] = None
+
+class ResourceUpdate(BaseModel):
+    resources: List[ResourceItem]
+
 state: Dict[str, Any] = {
     "mode": "idle",
     "components": [],      # filled after scan
@@ -891,3 +899,29 @@ def get_frame():
             )
 
     return Response(content=jpeg_bytes, media_type="image/jpeg")
+
+
+@app.post("/resources/update")
+def update_resources(update: ResourceUpdate):
+    resources = update.resources
+    if not resources:
+        return {"status": "ok", "updated": 0}
+
+    new_slots: Dict[str, Dict[str, str]] = {}
+    for idx, item in enumerate(resources[:3], start=1):
+        label = item.label.strip() or f"Resource {idx}"
+        url = item.url.strip()
+        if not url:
+            continue
+        new_slots[f"resource_{idx}"] = {
+            "label": label[:60],
+            "icon": (item.icon or "link").strip() or "link",
+            "url": url,
+        }
+
+    if not new_slots:
+        return {"status": "error", "error": "no valid resources"}
+
+    state["resource_slots"] = new_slots
+    broadcast_event({"type": "resources", "payload": new_slots})
+    return {"status": "ok", "updated": len(new_slots)}
