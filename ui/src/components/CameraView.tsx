@@ -1,209 +1,100 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 interface CameraViewProps {
   width: number; // percentage
 }
 
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://127.0.0.1:8000';
+
 export default function CameraView({ width }: CameraViewProps) {
-  const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
-  const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
-  const [cameraActive, setCameraActive] = useState(false);
   const [error, setError] = useState<string>('');
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
+  const [imgUrl, setImgUrl] = useState<string>('');
+  const [refreshMs, setRefreshMs] = useState<number>(1000);
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Enumerate camera devices
-  const enumerateDevices = async () => {
+  const fetchFrame = async () => {
     try {
-      const allDevices = await navigator.mediaDevices.enumerateDevices();
-      const videoDevices = allDevices.filter((d) => d.kind === 'videoinput');
-      setDevices(videoDevices);
-
-      if (videoDevices.length > 0 && !selectedDeviceId) {
-        setSelectedDeviceId(videoDevices[0].deviceId);
+      const url = `${BACKEND_URL.replace(/\/$/, '')}/frame?ts=${Date.now()}`;
+      const res = await fetch(url);
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
       }
-    } catch (err) {
-      console.error('Failed to enumerate devices:', err);
-      setError('Unable to access camera devices');
-    }
-  };
-
-  // Request camera permission and enumerate
-  const requestCameraAccess = async () => {
-    try {
-      // Request permission by opening a stream
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      // Stop the stream immediately after permission is granted
-      stream.getTracks().forEach((track) => track.stop());
-      // Now enumerate devices
-      await enumerateDevices();
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      setImgUrl((prev) => {
+        if (prev && prev.startsWith('blob:')) {
+          URL.revokeObjectURL(prev);
+        }
+        return objectUrl;
+      });
       setError('');
     } catch (err) {
-      console.error('Camera permission denied:', err);
-      setError('Camera permission denied');
+      console.error('Failed to fetch frame:', err);
+      setError('Unable to fetch camera frame');
     }
   };
 
-  // Start camera with selected device
-  const startCamera = async () => {
-    if (!selectedDeviceId) {
-      setError('No camera selected');
-      return;
-    }
-
-    try {
-      // Stop existing stream if any
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((track) => track.stop());
-      }
-
-      const constraints: MediaStreamConstraints = {
-        video: {
-          deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
-        },
-      };
-
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      streamRef.current = stream;
-
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
-
-      setCameraActive(true);
-      setError('');
-    } catch (err) {
-      console.error('Failed to start camera:', err);
-      setError('Failed to start camera');
-      setCameraActive(false);
-    }
-  };
-
-  // Stop camera
-  const stopCamera = () => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-    }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-    }
-    setCameraActive(false);
-  };
-
-  // Handle device change
-  const handleDeviceChange = (deviceId: string) => {
-    setSelectedDeviceId(deviceId);
-    if (cameraActive) {
-      // Restart camera with new device
-      stopCamera();
-      setTimeout(() => {
-        setSelectedDeviceId(deviceId);
-      }, 100);
-    }
-  };
-
-  // Auto-start camera when device is selected and camera is active
   useEffect(() => {
-    if (cameraActive && selectedDeviceId) {
-      startCamera();
-    }
-  }, [selectedDeviceId, cameraActive]);
-
-  // Cleanup on unmount
-  useEffect(() => {
+    fetchFrame();
+    intervalRef.current = setInterval(fetchFrame, refreshMs);
     return () => {
-      stopCamera();
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+      }
+      setImgUrl((prev) => {
+        if (prev && prev.startsWith('blob:')) {
+          URL.revokeObjectURL(prev);
+        }
+        return '';
+      });
     };
-  }, []);
+  }, [refreshMs]);
 
   return (
     <div
       className="flex flex-col bg-darker border-r border-gray-800"
       style={{ width: `${width}%` }}
     >
-      {/* Camera Controls */}
       <div className="flex items-center gap-3 p-4 bg-dark border-b border-gray-800">
         <h2 className="text-lg font-semibold">Camera Feed</h2>
-
-        {devices.length === 0 ? (
+        <div className="text-xs text-gray-400">Backend: {BACKEND_URL}</div>
+        <div className="ml-auto flex items-center gap-2">
+          <label className="text-xs text-gray-300">Refresh (ms)</label>
+          <input
+            type="number"
+            min={200}
+            step={200}
+            value={refreshMs}
+            onChange={(e) => setRefreshMs(Math.max(200, Number(e.target.value) || 1000))}
+            className="w-20 px-2 py-1 bg-gray-800 border border-gray-700 rounded text-xs"
+          />
           <button
-            onClick={requestCameraAccess}
-            className="btn btn-primary text-sm ml-auto"
+            onClick={fetchFrame}
+            className="btn btn-secondary text-sm"
+            title="Refresh now"
           >
-            Grant Camera Access
+            Refresh
           </button>
-        ) : (
-          <>
-            <select
-              value={selectedDeviceId}
-              onChange={(e) => handleDeviceChange(e.target.value)}
-              className="px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-              disabled={devices.length === 0}
-            >
-              {devices.map((device) => (
-                <option key={device.deviceId} value={device.deviceId}>
-                  {device.label || `Camera ${device.deviceId.slice(0, 8)}`}
-                </option>
-              ))}
-            </select>
-
-            <button
-              onClick={enumerateDevices}
-              className="btn btn-secondary text-sm"
-              title="Refresh devices"
-            >
-              🔄 Refresh
-            </button>
-
-            {cameraActive ? (
-              <button onClick={stopCamera} className="btn btn-danger text-sm ml-auto">
-                Stop Camera
-              </button>
-            ) : (
-              <button
-                onClick={startCamera}
-                className="btn btn-success text-sm ml-auto"
-                disabled={!selectedDeviceId}
-              >
-                Start Camera
-              </button>
-            )}
-          </>
-        )}
+        </div>
       </div>
 
-      {/* Video Feed */}
       <div className="flex-1 relative bg-black flex items-center justify-center">
         {error && (
           <div className="absolute top-4 left-4 right-4 bg-red-900/90 text-white px-4 py-2 rounded-lg z-10">
             {error}
           </div>
         )}
-
-        {!cameraActive && !error && (
+        {imgUrl ? (
+          <img src={imgUrl} alt="Camera frame" className="max-w-full max-h-full object-contain" />
+        ) : (
           <div className="text-gray-500 text-center">
-            <div className="text-6xl mb-4">📷</div>
-            <p className="text-lg">Camera not active</p>
-            <p className="text-sm mt-2">Click "Start Camera" to begin</p>
+            <div className="text-lg mb-2">Awaiting frame…</div>
+            <p className="text-sm">Ensure the backend camera is running.</p>
           </div>
         )}
-
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          muted
-          className={`max-w-full max-h-full object-contain ${
-            cameraActive ? 'block' : 'hidden'
-          }`}
-        />
       </div>
     </div>
   );
 }
-
