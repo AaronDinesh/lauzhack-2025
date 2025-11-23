@@ -147,12 +147,12 @@ async def amain() -> None:
 
     if args.execute_tools and plan.tool_calls:
         urls_by_query = await _execute_tool_calls_async(plan, args.max_results, args.model)
-        if urls_by_query:
-            print("\nCollected URLs by query:")
-            for query, urls in urls_by_query.items():
-                print(f"- {query}:")
-                for url in urls:
-                    print(f"  {url}")
+        # if urls_by_query:
+        #     print("\nCollected URLs by query:")
+        #     for query, urls in urls_by_query.items():
+        #         print(f"- {query}:")
+        #         for url in urls:
+        #             print(f"  {url}")
     elif args.execute_tools:
         print("\nNo tool calls requested by the assistant.")
 
