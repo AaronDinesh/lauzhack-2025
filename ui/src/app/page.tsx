@@ -60,6 +60,14 @@ export default function Home() {
     return () => observer.disconnect();
   }, []);
 
+  useEffect(() => {
+    if (!isElectron || !panelVisible || !window.electronAPI?.resizePanel) {
+      return;
+    }
+    const panelFraction = (100 - workspaceSplit) / 100;
+    window.electronAPI.resizePanel(panelFraction, controlBarHeight);
+  }, [workspaceSplit, controlBarHeight, isElectron, panelVisible]);
+
   const resolveUrl = useCallback(
     (urlCandidate?: string) => {
       return sanitizeUrl(urlCandidate) || sanitizeUrl(panelUrl) || initialPanelUrl;
@@ -214,6 +222,11 @@ export default function Home() {
             lastResponseRef.current = data.last_response;
             pushStatus({ label: 'Jarvis responded', detail: data.last_response, tone: 'success' });
           }
+          if (typeof data.workspace_split === 'number' && Number.isFinite(data.workspace_split)) {
+            setWorkspaceSplit((prev) =>
+              Math.abs(prev - data.workspace_split) < 0.1 ? prev : data.workspace_split
+            );
+          }
         }
       } catch (err) {
         console.error('Failed to fetch status:', err);
@@ -221,7 +234,7 @@ export default function Home() {
     };
 
     pollStatus();
-    statusPollRef.current = setInterval(pollStatus, 5000);
+    statusPollRef.current = setInterval(pollStatus, 500);
     return () => {
       if (statusPollRef.current) {
         clearInterval(statusPollRef.current);

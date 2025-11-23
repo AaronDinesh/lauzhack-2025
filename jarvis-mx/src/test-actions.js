@@ -177,3 +177,24 @@ export class ScrollComponentAdjustment extends AdjustmentAction {
     console.log('Scroll result:', result);
   }
 }
+
+export class PanelResizeAdjustment extends AdjustmentAction {
+  name = 'jarvis_resize_panel';
+  displayName = 'Resize Panel';
+  description = 'Rotate to adjust panel width';
+  groupName = 'Jarvis';
+
+  async execute(event) {
+    const direction = event.tick > 0 ? 1 : -1;
+    console.log('Jarvis: Resize panel dial', direction);
+
+    const result = await sendToBackend({
+      device: 'dialpad',
+      control: 'panel_dial',
+      event: 'rotate',
+      action: 'resize_panel',
+      value: direction,
+    });
+    console.log('Resize panel result:', result);
+  }
+}
