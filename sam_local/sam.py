@@ -110,15 +110,9 @@ async def sam3_infer_image(
                     # 2. Calculate Center (Pixels)
                     cx_px = x1 + (w_px / 2)
                     cy_px = y1 + (h_px / 2)
-
-                    # 3. Normalize to [0, 1] for the model
-                    norm_cx = cx_px / img_w
-                    norm_cy = cy_px / img_h
-                    norm_w = w_px / img_w
-                    norm_h = h_px / img_h
                     
                     # TARGET: [center_x, center_y, width, height] Normalized
-                    geometric_box = [norm_cx, norm_cy, norm_w, norm_h]
+                    geometric_box = [cx_px, cy_px, w_px, h_px]
 
                     # 4. Call method on the processor
                     inference_state = _processor.add_geometric_prompt(
