@@ -156,6 +156,28 @@ export class Resource3Action extends CommandAction {
   }
 }
 
+// Resource 4 -> Segmentation toggle
+export class Resource4Action extends CommandAction {
+  name = 'jarvis_resource_4';
+  displayName = 'Resource 4';
+  description = 'Show or hide the segmentation overlay';
+  groupName = 'Jarvis';
+
+  async onKeyDown(event) {
+    console.log('Jarvis: Resource 4 pressed');
+    const result = await sendToBackend({
+      device: 'keypad',
+      control: 'resource_4',
+      event: 'press',
+      action: 'resource_4',
+    });
+    console.log('Resource 4 result:', result);
+    if (result && result.error) {
+      console.error('Segmentation toggle failed:', result.error);
+    }
+  }
+}
+
 // Dial: scroll components
 export class ScrollComponentAdjustment extends AdjustmentAction {
   name = 'jarvis_scroll_component';

@@ -145,6 +145,7 @@ class ToolExecutor:
         screenshot_path: str | None = None,
         screenshot_base64: str | None = None,
         status_callback=None,
+        result_callback=None,
     ) -> Dict[str, List[Any]]:
         tasks: List[asyncio.Task] = []
         
@@ -181,6 +182,12 @@ class ToolExecutor:
         
         if status_callback:
             status_callback("Tools finished.")
+
+        if result_callback and collected:
+            try:
+                result_callback(collected)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[Tools] result callback failed: {exc}")
             
         return collected
 
@@ -190,10 +197,17 @@ class ToolExecutor:
         screenshot_path: str | None = None,
         screenshot_base64: str | None = None,
         status_callback=None,
+        result_callback=None,
     ) -> None:
         """Fire-and-forget execution of tool calls."""
         asyncio.run_coroutine_threadsafe(
-            self._execute_plan(plan, screenshot_path, screenshot_base64, status_callback),
+            self._execute_plan(
+                plan,
+                screenshot_path,
+                screenshot_base64,
+                status_callback,
+                result_callback,
+            ),
             self._loop,
         )
 

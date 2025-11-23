@@ -6,6 +6,7 @@ import {
   Resource1Action,
   Resource2Action,
   Resource3Action,
+  Resource4Action,
   ScrollComponentAdjustment,
   PanelResizeAdjustment,
 } from './src/test-actions.js';
@@ -17,6 +18,7 @@ pluginSDK.registerAction(new StopAction());
 pluginSDK.registerAction(new Resource1Action());
 pluginSDK.registerAction(new Resource2Action());
 pluginSDK.registerAction(new Resource3Action());
+pluginSDK.registerAction(new Resource4Action());
 pluginSDK.registerAction(new ScrollComponentAdjustment());
 pluginSDK.registerAction(new PanelResizeAdjustment());
 

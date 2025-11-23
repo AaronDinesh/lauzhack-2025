@@ -1,8 +1,24 @@
 import { useEffect, useRef, useState } from 'react';
 
 export interface MXAction {
-  type: 'setUrl' | 'togglePanel' | 'triggerStep' | 'setLayout' | 'setMockMode' | 'setBridgeEndpoint';
+  type:
+    | 'setUrl'
+    | 'togglePanel'
+    | 'triggerStep'
+    | 'setLayout'
+    | 'setMockMode'
+    | 'setBridgeEndpoint'
+    | 'segmentationData'
+    | 'segmentationVisible';
   payload?: any;
+}
+
+export interface SegmentationEventPayload {
+  prompt?: string;
+  imageData?: string;
+  numObjects?: number;
+  scores?: number[];
+  timestamp?: number;
 }
 
 interface MXBridgeCallbacks {
@@ -12,6 +28,8 @@ interface MXBridgeCallbacks {
   onSetLayout?: (layout: { dockSide?: 'left' | 'right'; workspaceSplit?: number }) => void;
   onSetMockMode?: (enabled: boolean) => void;
   onSetBridgeEndpoint?: (endpoint: string) => void;
+  onSegmentationData?: (payload: SegmentationEventPayload) => void;
+  onSegmentationVisible?: (visible: boolean) => void;
 }
 
 export function useMXBridge(endpoint: string | undefined, callbacks: MXBridgeCallbacks) {
@@ -94,6 +112,16 @@ export function useMXBridge(endpoint: string | undefined, callbacks: MXBridgeCal
               case 'setBridgeEndpoint':
                 if (callbacks.onSetBridgeEndpoint && action.payload?.endpoint) {
                   callbacks.onSetBridgeEndpoint(action.payload.endpoint);
+                }
+                break;
+              case 'segmentationData':
+                if (callbacks.onSegmentationData && action.payload) {
+                  callbacks.onSegmentationData(action.payload);
+                }
+                break;
+              case 'segmentationVisible':
+                if (callbacks.onSegmentationVisible && typeof action.payload?.visible === 'boolean') {
+                  callbacks.onSegmentationVisible(Boolean(action.payload.visible));
                 }
                 break;
               default:

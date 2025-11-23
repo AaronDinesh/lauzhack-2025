@@ -8,7 +8,7 @@ from time import perf_counter, time as current_time
 from typing import Optional, Dict, Any, List
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Response, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -67,6 +67,8 @@ state: Dict[str, Any] = {
     "tools_active": False,
     "active_tools": [],
     "last_tool_status": None,
+    "segmentation": None,
+    "segmentation_visible": False,
 }
 
 MODEL_NAME = os.getenv("JARVIS_RESPONSES_MODEL", "gpt-5-nano")
@@ -165,6 +167,91 @@ def _handle_tool_status_update(message: str) -> None:
         state["active_tools"] = []
 
 
+def _data_url_from_path(path: Path) -> Optional[str]:
+    try:
+        b64 = encode_image(path)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[Segmentation] Failed to encode overlay {path}: {exc}", file=sys.stderr)
+        return None
+
+    suffix = path.suffix.lower()
+    mime = "image/png" if suffix == ".png" else "image/jpeg"
+    return f"data:{mime};base64,{b64}"
+
+
+def _handle_tool_results(results: Dict[str, List[Any]]) -> None:
+    if not results:
+        return
+
+    latest_payload: Optional[Dict[str, Any]] = None
+    for prompt, entries in results.items():
+        if not entries:
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            overlay_path = entry.get("overlay_path")
+            if not overlay_path:
+                continue
+            path = Path(overlay_path)
+            if not path.exists():
+                print(f"[Segmentation] Overlay missing on disk: {overlay_path}", file=sys.stderr)
+                continue
+            data_url = _data_url_from_path(path)
+            if not data_url:
+                continue
+            latest_payload = {
+                "prompt": prompt,
+                "image_data": data_url,
+                "overlay_path": str(path),
+                "num_objects": entry.get("num_objects"),
+                "scores": entry.get("scores"),
+                "timestamp": current_time(),
+            }
+
+    if not latest_payload:
+        return
+
+    state["segmentation"] = latest_payload
+    state["segmentation_visible"] = False
+
+    broadcast_event(
+        {
+            "type": "segmentationData",
+            "payload": {
+                "prompt": latest_payload["prompt"],
+                "imageData": latest_payload["image_data"],
+                "numObjects": latest_payload.get("num_objects"),
+                "scores": latest_payload.get("scores"),
+                "timestamp": latest_payload["timestamp"],
+            },
+        }
+    )
+
+
+def _toggle_segmentation_overlay(explicit_value: Optional[int]) -> Dict[str, Any]:
+    payload = state.get("segmentation")
+    if not payload:
+        return {"status": "error", "error": "No segmentation available yet."}
+
+    visible = state.get("segmentation_visible", False)
+    if explicit_value is None:
+        visible = not visible
+    else:
+        visible = bool(explicit_value)
+
+    state["segmentation_visible"] = visible
+    broadcast_event({"type": "segmentationVisible", "payload": {"visible": visible}})
+
+    response: Dict[str, Any] = {
+        "status": "ok",
+        "segmentation_visible": visible,
+    }
+    if visible:
+        response["segmentation"] = payload
+    return response
+
+
 def _dispatch_tool_plan(
     plan: AssistantPlan,
     screenshot_path: Path,
@@ -192,6 +279,7 @@ def _dispatch_tool_plan(
         str(screenshot_path),
         screenshot_base64,
         status_callback=_handle_tool_status_update,
+        result_callback=_handle_tool_results,
     )
 
 
@@ -809,6 +897,14 @@ def handle_console_action(action: ConsoleAction):
 
         return {"status": "ok", "mode": state["mode"], "message": "Jarvis stopped."}
 
+    elif action.action == "resource_4":
+        result = _toggle_segmentation_overlay(action.value)
+        result["slot"] = "resource_4"
+        return result
+
+    elif action.action == "toggle_segmentation_overlay":
+        return _toggle_segmentation_overlay(action.value)
+
     elif action.action.startswith("resource_"):
         slot = action.action  # "resource_1", "resource_2", ...
         resource = state["resource_slots"].get(slot)
@@ -869,7 +965,17 @@ def get_status():
         "tools_active": state.get("tools_active", False),
         "active_tools": state.get("active_tools", []),
         "last_tool_status": state.get("last_tool_status"),
+        "segmentation_available": bool(state.get("segmentation")),
+        "segmentation_visible": state.get("segmentation_visible", False),
     }
+
+
+@app.get("/segmentation/latest")
+def get_latest_segmentation():
+    payload = state.get("segmentation")
+    if not payload:
+        raise HTTPException(status_code=404, detail="No segmentation available")
+    return payload
 
 
 @app.get("/stream")
