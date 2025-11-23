@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 from dotenv import load_dotenv
-from openai import OpenAI
+from openai import AsyncOpenAI
 
 from assistant_plan import (
     AssistantPlan,
@@ -13,7 +14,8 @@ from assistant_plan import (
     encode_image,
     parse_assistant_plan_response,
 )
-from duckduckgo_search import search_duckduckgo
+
+BUILTIN_TOOLS = [{"type": "web_search"}]
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -44,7 +46,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--max-results",
         type=int,
         default=5,
-        help="Max links to return when executing the search_web tool.",
+        help="Max links to return when executing the web_search tool.",
     )
     return parser
 
@@ -62,35 +64,66 @@ def _build_user_content(prompt: str, screenshot: Path | None) -> List[Dict[str, 
     return content
 
 
-def _execute_tool_calls(plan: AssistantPlan, max_results: int) -> None:
-    for call in plan.tool_calls:
-        if call.tool != "search_web":
-            continue
+async def _execute_tool_calls_async(
+    plan: AssistantPlan, max_results: int, model: str
+) -> Dict[str, List[str]]:
+    client = AsyncOpenAI()
 
+    async def run_search(query: str, max_items: int) -> Tuple[str, List[str]]:
+        print(f"\n[Tool] web_search -> {query!r} (max_results={max_items})")
+        try:
+            response = await client.responses.create(
+                model=model,
+                tools=BUILTIN_TOOLS,
+                reasoning={"effort": "low"},
+                input=(
+                    f"Find up to {max_items} relevant links for: {query}. "
+                    "Return concise bullet links. Where possible find pdfs and files online."
+                ),
+            )
+
+            response_dict = response.to_dict()
+            urls = [
+                elem["url"]
+                for elem in [
+                    x["content"][0]["annotations"]
+                    for x in response_dict["output"]
+                    if x["id"].startswith("msg")
+                ][0]
+            ]
+            print(urls)
+        except Exception as exc:  # noqa: BLE001
+            print(f"web_search failed: {exc}")
+            urls = []
+
+        return query, urls
+
+    tasks: List[asyncio.Task[Tuple[str, List[str]]]] = []
+    for call in plan.tool_calls:
+        if call.tool != "web_search":
+            continue
         query = call.input.get("query", "")
         max_items = int(call.input.get("max_results") or max_results)
-        print(f"\n[Tool] search_web -> {query!r} (max_results={max_items})")
-        try:
-            results = search_duckduckgo(query, max_results=max_items)
-        except Exception as exc:  # noqa: BLE001
-            print(f"search_web failed: {exc}")
-            continue
+        tasks.append(asyncio.create_task(run_search(query, max_items)))
 
-        for idx, item in enumerate(results, start=1):
-            title = item.get("title", "").strip()
-            url = item.get("url", "").strip()
-            print(f"{idx}. {title}\n   {url}")
+    collected: Dict[str, List[str]] = {}
+    if tasks:
+        results = await asyncio.gather(*tasks)
+        for query, urls in results:
+            collected[query] = urls
+
+    return collected
 
 
-def main() -> None:
+async def amain() -> None:
     load_dotenv()
     args = _build_parser().parse_args()
 
-    client = OpenAI()
+    client = AsyncOpenAI()
     system_prompt = build_system_prompt()
     user_content = _build_user_content(args.prompt, args.screenshot)
 
-    response = client.responses.parse(
+    response = await client.responses.parse(
         model=args.model,
         input=[
             {
@@ -103,7 +136,9 @@ def main() -> None:
             },
         ],
         text_format=AssistantPlan,
-        reasoning={"effort": "minimal"},
+        reasoning={
+            "effort": "minimal",
+        },
     )
 
     plan = parse_assistant_plan_response(response)
@@ -111,10 +146,16 @@ def main() -> None:
     print(plan.model_dump_json(indent=2))
 
     if args.execute_tools and plan.tool_calls:
-        _execute_tool_calls(plan, args.max_results)
+        urls_by_query = await _execute_tool_calls_async(plan, args.max_results, args.model)
+        if urls_by_query:
+            print("\nCollected URLs by query:")
+            for query, urls in urls_by_query.items():
+                print(f"- {query}:")
+                for url in urls:
+                    print(f"  {url}")
     elif args.execute_tools:
         print("\nNo tool calls requested by the assistant.")
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(amain())

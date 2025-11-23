@@ -13,8 +13,8 @@ TOOL_GUIDANCE: Sequence[tuple[str, str]] = (
         "Use SAM3 when you must segment an element in an image. Provide target_element and 1-5 synonyms.",
     ),
     (
-        "search_web",
-        "Use DuckDuckGo when you need live web resources or troubleshooting links. Provide query and optional max_results (1-10).",
+        "web_search",
+        "Use OpenAI web_search when you need live web resources or troubleshooting links. Provide query and optional max_results (1-10) in your plan.",
     ),
 )
 
@@ -26,7 +26,7 @@ class Sam3Input(BaseModel):
     )
 
 
-class DuckDuckGoSearchInput(BaseModel):
+class WebSearchInput(BaseModel):
     query: str = Field(..., description="Natural-language search query.")
     max_results: int = Field(
         5,
@@ -60,7 +60,7 @@ class ToolInput(BaseModel):
 
 
 class ToolCall(BaseModel):
-    tool: Literal["segmentation", "search_web"]
+    tool: Literal["segmentation", "web_search"]
     rationale: str = Field(..., description="The rationale for calling the tool.")
     input: ToolInput = Field(..., description="Tool-specific arguments.")
 
@@ -70,8 +70,8 @@ class ToolCall(BaseModel):
         payload = self.input.model_dump(exclude_none=True)
         if self.tool == "segmentation":
             self.input = Sam3Input.model_validate(payload).model_dump()
-        elif self.tool == "search_web":
-            self.input = DuckDuckGoSearchInput.model_validate(payload).model_dump()
+        elif self.tool == "web_search":
+            self.input = WebSearchInput.model_validate(payload).model_dump()
         return self
 
 
@@ -120,4 +120,3 @@ def parse_assistant_plan_response(response: object) -> AssistantPlan:
                 return candidate
 
     raise RuntimeError("No parsed AssistantPlan returned from responses.parse()")
-
