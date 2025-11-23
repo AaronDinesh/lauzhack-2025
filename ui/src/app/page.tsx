@@ -162,8 +162,15 @@ export default function Home() {
       setBridgeEndpoint(endpoint);
       pushStatus({ label: 'Bridge endpoint updated', detail: endpoint, tone: 'info' });
     },
+<<<<<<< Updated upstream
     onSegmentationData: handleSegmentationData,
     onSegmentationVisible: handleSegmentationVisible,
+=======
+    onScrollVertical: (delta: number) => {
+      // Dispatch a custom event that the WebPanel iframe can listen to
+      window.dispatchEvent(new CustomEvent('scroll-panel', { detail: { delta } }));
+    },
+>>>>>>> Stashed changes
   });
 
   const handleMockSetUrl = useCallback(() => {
@@ -478,7 +485,7 @@ export default function Home() {
 
       {/* Main Content Area */}
       <div
-        className="grid flex-1 overflow-hidden"
+        className="grid flex-1"
         ref={workspaceRef}
         style={{
           gridTemplateColumns: panelVisible
@@ -486,6 +493,7 @@ export default function Home() {
               ? `calc(${100 - workspaceSplit}% - ${HANDLE_WIDTH}px) ${HANDLE_WIDTH}px ${workspaceSplit}%`
               : `${workspaceSplit}% ${HANDLE_WIDTH}px calc(${100 - workspaceSplit}% - ${HANDLE_WIDTH}px)`
             : '100%',
+          overflow: 'hidden',
         }}
       >
         {dockSide === 'left' && panelVisible && (

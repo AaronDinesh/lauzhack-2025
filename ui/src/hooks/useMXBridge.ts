@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 export interface MXAction {
+<<<<<<< Updated upstream
   type:
     | 'setUrl'
     | 'togglePanel'
@@ -10,6 +11,9 @@ export interface MXAction {
     | 'setBridgeEndpoint'
     | 'segmentationData'
     | 'segmentationVisible';
+=======
+  type: 'setUrl' | 'togglePanel' | 'triggerStep' | 'setLayout' | 'setMockMode' | 'setBridgeEndpoint' | 'scroll_vertical';
+>>>>>>> Stashed changes
   payload?: any;
 }
 
@@ -28,8 +32,12 @@ interface MXBridgeCallbacks {
   onSetLayout?: (layout: { dockSide?: 'left' | 'right'; workspaceSplit?: number }) => void;
   onSetMockMode?: (enabled: boolean) => void;
   onSetBridgeEndpoint?: (endpoint: string) => void;
+<<<<<<< Updated upstream
   onSegmentationData?: (payload: SegmentationEventPayload) => void;
   onSegmentationVisible?: (visible: boolean) => void;
+=======
+  onScrollVertical?: (delta: number) => void;
+>>>>>>> Stashed changes
 }
 
 export function useMXBridge(endpoint: string | undefined, callbacks: MXBridgeCallbacks) {
@@ -114,6 +122,7 @@ export function useMXBridge(endpoint: string | undefined, callbacks: MXBridgeCal
                   callbacks.onSetBridgeEndpoint(action.payload.endpoint);
                 }
                 break;
+<<<<<<< Updated upstream
               case 'segmentationData':
                 if (callbacks.onSegmentationData && action.payload) {
                   callbacks.onSegmentationData(action.payload);
@@ -122,6 +131,11 @@ export function useMXBridge(endpoint: string | undefined, callbacks: MXBridgeCal
               case 'segmentationVisible':
                 if (callbacks.onSegmentationVisible && typeof action.payload?.visible === 'boolean') {
                   callbacks.onSegmentationVisible(Boolean(action.payload.visible));
+=======
+              case 'scroll_vertical':
+                if (callbacks.onScrollVertical && typeof action.payload?.delta === 'number') {
+                  callbacks.onScrollVertical(action.payload.delta);
+>>>>>>> Stashed changes
                 }
                 break;
               default:

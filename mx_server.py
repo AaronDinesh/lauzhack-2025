@@ -920,6 +920,9 @@ def handle_console_action(action: ConsoleAction):
         if not resource:
             return {"status": "error", "error": f"no resource mapped for {slot}"}
 
+        # Broadcast the URL to the frontend to open in the web panel
+        broadcast_event({"type": "setUrl", "payload": {"url": resource["url"]}})
+        
         # Frontend / launcher can use this URL to open manual / video / file.
         return {
             "status": "ok",
@@ -938,6 +941,13 @@ def handle_console_action(action: ConsoleAction):
             "note": f"scroll tick={action.value}",
         }
         broadcast_event({"type": "scroll_component", "payload": {"value": action.value}})
+        return response
+    
+    elif action.action == "scroll_vertical":
+        # Vertical scroll from Creator console trackpad
+        delta = action.value or 0
+        broadcast_event({"type": "scroll_vertical", "payload": {"delta": delta}})
+        return {"status": "ok", "delta": delta}
     elif action.action == "resize_panel":
         # The dial sends a delta (positive = make panel larger, negative = shrink)
         delta = action.value or 0
