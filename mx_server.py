@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import threading
@@ -300,10 +301,12 @@ def recording_status() -> Dict[str, Any]:
     }
 
 
-# Fake "VLM" / LLM pipeline 
-
-def fake_llm_analyse_scene() -> Dict[str, Any]:
-    # hardcdoded analysis result
+# Fake "VLM" / LLM pipeline
+def analyse_scene_with_vlm_stub() -> Dict[str, Any]:
+    """
+    Stand-in for the real VLM pipeline.
+    Returns detected components and resource slot metadata.
+    """
 
     components = [
         {
@@ -342,6 +345,228 @@ def fake_llm_analyse_scene() -> Dict[str, Any]:
     return {"components": components, "resource_slots": resource_slots}
 
 
+def _build_buttons_from_state(resource_slots: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Return runtime button metadata for future dynamic icon updates."""
+    buttons: List[Dict[str, Any]] = []
+    for slot, cfg in resource_slots.items():
+        buttons.append(
+            {
+                "slot": slot,
+                "label": cfg["label"],
+                "icon": cfg["icon"],
+            }
+        )
+    return buttons
+
+
+def _extract_json_from_response(resp: Any) -> Dict[str, Any]:
+    """Parse JSON text from OpenAI Responses result."""
+    try:
+        if hasattr(resp, "output"):
+            outputs = resp.output or []
+        elif isinstance(resp, dict):
+            outputs = resp.get("output", [])
+        else:
+            outputs = []
+
+        for item in outputs:
+            for chunk in item.get("content", []):
+                if chunk.get("type") == "output_text":
+                    text = (chunk.get("text") or "").strip()
+                    if text:
+                        return json.loads(text)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[VLM] Failed to parse JSON: {exc}", file=sys.stderr)
+    return {}
+
+
+def analyse_scene_with_vlm() -> Dict[str, Any]:
+    """
+    Real VLM call: capture a frame and ask the model for structured components/resources.
+    Falls back to stub on failure.
+    """
+    if frame_cache is None:
+        print("[VLM] Frame cache not initialized; falling back to stub", file=sys.stderr)
+        return analyse_scene_with_vlm_stub()
+
+    # Capture image + recent conversation context; description drives the vision call.
+    content, screenshot_path = capture_with_context(
+        "Identify visible PC components and propose manuals/videos.",
+        camera_index=CAMERA_INDEX,
+        frame_cache=frame_cache,
+    )
+    print(f"[VLM] Captured screenshot for analysis at {screenshot_path}")
+
+    schema = {
+        "name": "scene_analysis",
+        "schema": {
+            "type": "object",
+            "properties": {
+                "components": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "type": {"type": "string"},
+                            "manual_url": {"type": "string"},
+                            "video_url": {"type": "string"},
+                        },
+                        "required": ["name", "type"],
+                    },
+                },
+                "resource_slots": {
+                    "type": "object",
+                    "patternProperties": {
+                        "^resource_[1-3]$": {
+                            "type": "object",
+                            "properties": {
+                                "label": {"type": "string"},
+                                "icon": {"type": "string"},
+                                "url": {"type": "string"},
+                            },
+                            "required": ["label", "icon", "url"],
+                        }
+                    },
+                    "additionalProperties": False,
+                },
+            },
+            "required": ["components", "resource_slots"],
+        },
+        "strict": True,
+    }
+
+    system_prompt = (
+        "You are Jarvis, a PC hardware assistant. Inspect the image and text, "
+        "identify the most relevant devices, and map resource slots for a Logitech MX keypad. "
+        "You MUST fill resource_1/2/3 with concise labels (emoji allowed), icons, and real URLs "
+        "to manuals/support pages or reputable tutorials (no placeholders). "
+        "Prefer: resource_1 = primary device manual; resource_2 = secondary device manual or alternate guide; "
+        "resource_3 = video tutorial for the primary device. "
+        "Return ONLY JSON matching the provided schema."
+    )
+
+    try:
+        resp = client.responses.create(
+            model=MODEL_NAME,
+            response_format={"type": "json_schema", "json_schema": schema},
+            input=[
+                {
+                    "role": "system",
+                    "content": [{"type": "input_text", "text": system_prompt}],
+                },
+                {
+                    "role": "user",
+                    "content": content
+                    + [
+                        {
+                            "type": "input_text",
+                            "text": (
+                                "Populate resource_1/2/3 with label, icon, url for the keypad. "
+                                "You MUST avoid placeholders; pick the closest relevant manual/support page or a reputable tutorial link. "
+                                "Keep labels short and keypad-friendly (emoji allowed)."
+                            ),
+                        }
+                    ],
+                },
+            ],
+        )
+
+        parsed = _extract_json_from_response(resp)
+        if parsed:
+            components = parsed.get("components") or []
+            resource_slots = parsed.get("resource_slots") or {}
+
+            # If VLM did not propose resources, derive sensible defaults from components.
+            if not resource_slots:
+                if components:
+                    resource_slots = _build_resource_slots_from_components(components)
+                else:
+                    # Last resort: stub
+                    stub = analyse_scene_with_vlm_stub()
+                    components = stub["components"]
+                    resource_slots = stub["resource_slots"]
+
+            return {"components": components, "resource_slots": resource_slots}
+    except Exception as exc:  # noqa: BLE001
+        print(f"[VLM] Analysis failed, will fall back to stub: {exc}", file=sys.stderr)
+
+    return analyse_scene_with_vlm_stub()
+
+
+def _build_summary_from_components(components: List[Dict[str, Any]]) -> str:
+    names = [c.get("name") for c in components if c.get("name")]
+    if not names:
+        return "I found some components. How would you like to proceed?"
+    if len(names) == 1:
+        return f"I see {names[0]}. How would you like to proceed?"
+    return f"I see {', '.join(names[:-1])} and {names[-1]}. How would you like to proceed?"
+
+
+def _build_resource_slots_from_components(components: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """
+    Derive resource slots from detected components:
+      resource_1: manual for first component
+      resource_2: manual for second component (or video for first if only one)
+      resource_3: video/tutorial for first component
+    """
+    if not components:
+        return {}
+
+    def icon_for(component: Dict[str, Any]) -> str:
+        return (component.get("type") or "manual").lower()
+
+    primary = components[0]
+    secondary = components[1] if len(components) > 1 else None
+
+    def safe_url(*candidates: str) -> str:
+        for c in candidates:
+            if c:
+                return c
+        # Last resort: vendor search link (keeps it non-empty but useful)
+        query = primary.get("name") or primary.get("type") or "pc hardware"
+        return f"https://www.google.com/search?q={query.replace(' ', '+')}+manual"
+
+    slots: Dict[str, Dict[str, Any]] = {}
+    slots["resource_1"] = {
+        "label": f"{primary.get('name', 'Component')} manual",
+        "icon": icon_for(primary),
+        "url": safe_url(primary.get("manual_url"), primary.get("url")),
+    }
+
+    if secondary:
+        slots["resource_2"] = {
+            "label": f"{secondary.get('name', 'Component')} manual",
+            "icon": icon_for(secondary),
+            "url": safe_url(secondary.get("manual_url"), secondary.get("url")),
+        }
+    else:
+        slots["resource_2"] = {
+            "label": f"{primary.get('name', 'Component')} manual",
+            "icon": icon_for(primary),
+            "url": safe_url(primary.get("manual_url"), primary.get("url")),
+        }
+
+    slots["resource_3"] = {
+        "label": f"{primary.get('name', 'Component')} video",
+        "icon": "video",
+        "url": safe_url(primary.get("video_url"), primary.get("manual_url"), primary.get("url")),
+    }
+
+    return slots
+
+
+def _summarize_resources(resource_slots: Dict[str, Dict[str, Any]]) -> str:
+    """Build a short message describing what was mapped to the keypad."""
+    if not resource_slots:
+        return ""
+    parts: List[str] = []
+    for slot, cfg in resource_slots.items():
+        label = cfg.get("label", slot)
+        parts.append(f"{slot}: {label}")
+    return "I've put resources on your keypad — " + "; ".join(parts) + "."
+
+
 # Routes
 
 @app.get("/health")
@@ -363,27 +588,15 @@ def handle_console_action(action: ConsoleAction):
     print("Received console action:", action)
 
     if action.action == "scan":
-        #pretend to analyse scene with a VLM/LLM
-        result = fake_llm_analyse_scene()
+        # pretend to analyse scene with a VLM/LLM
+        result = analyse_scene_with_vlm()
         state["mode"] = "scanned"
         state["components"] = result["components"]
         state["resource_slots"] = result["resource_slots"]
 
-        # build button updates for plugin
-        buttons: List[Dict[str, Any]] = []
-        for slot, cfg in state["resource_slots"].items():
-            buttons.append(
-                {
-                    "slot": slot,        # "resource_1", "resource_2", ...
-                    "label": cfg["label"],
-                    "icon": cfg["icon"],  # e.g. "ram" -> ram.png
-                }
-            )
+        buttons = _build_buttons_from_state(state["resource_slots"])
 
-        summary = (
-            "I see an ASUS Prime motherboard and Corsair DDR4 RAM. "
-            "How would you like to proceed?"
-        )
+        summary = _build_summary_from_components(state["components"])
 
         return {
             "status": "ok",
@@ -397,6 +610,14 @@ def handle_console_action(action: ConsoleAction):
         stop_speech()
         
         if not state["talk_recording_active"]:
+            buttons: List[Dict[str, Any]] = []
+            if not state["components"] or not state["resource_slots"]:
+                # Populate resource slots on first listen so keypad can react.
+                result = analyse_scene_with_vlm()
+                state["components"] = result["components"]
+                state["resource_slots"] = result["resource_slots"]
+                buttons = _build_buttons_from_state(state["resource_slots"])
+
             try:
                 path = talk_recorder.start()
             except Exception as exc:  # noqa: BLE001
@@ -409,7 +630,7 @@ def handle_console_action(action: ConsoleAction):
             state["mode"] = "talking"
             state["talk_recording_active"] = True
             state["current_recording"] = str(path)
-            return {
+            response = {
                 "status": "ok",
                 "mode": state["mode"],
                 "message": (
@@ -418,6 +639,11 @@ def handle_console_action(action: ConsoleAction):
                 ),
                 "recording": recording_status(),
             }
+
+            if buttons:
+                response["buttons"] = buttons
+
+            return response
 
         try:
             path = talk_recorder.stop()
@@ -437,14 +663,70 @@ def handle_console_action(action: ConsoleAction):
         state["last_transcript"] = processing.get("transcript")
         state["last_response"] = processing.get("assistant_text")
 
+        # Ensure resources are populated even if VLM missed them earlier.
+        if not state["resource_slots"]:
+            try:
+                result = analyse_scene_with_vlm()
+                state["components"] = result["components"]
+                state["resource_slots"] = result["resource_slots"]
+            except Exception as exc:  # noqa: BLE001
+                print(f"[VLM] Failed to populate resources on stop: {exc}", file=sys.stderr)
+
+        buttons = _build_buttons_from_state(state["resource_slots"])
+        resource_note = _summarize_resources(state["resource_slots"])
+
         response_payload = {
             "status": processing.get("status", "ok"),
             "mode": state["mode"],
-            "message": "Jarvis stopped listening.",
+            "message": "Jarvis stopped listening." if not resource_note else resource_note,
             "recording": {"recording": False, "path": str(path)},
         }
+        if buttons:
+            response_payload["buttons"] = buttons
         response_payload.update(processing)
         return response_payload
+
+    elif action.action == "stop":
+        # Stop any ongoing TTS and recording, return idle state.
+        stop_speech()
+        if state["talk_recording_active"]:
+            try:
+                path = talk_recorder.stop()
+                processing = _process_recording(Path(path))
+                state["last_recording"] = str(path)
+                state["last_transcript"] = processing.get("transcript")
+                state["last_response"] = processing.get("assistant_text")
+            except Exception as exc:  # noqa: BLE001
+                processing = {"status": "error", "error": f"Failed to stop recording: {exc}"}
+            finally:
+                state["talk_recording_active"] = False
+                state["current_recording"] = None
+                state["mode"] = "idle"
+
+            if not state["resource_slots"]:
+                try:
+                    result = analyse_scene_with_vlm()
+                    state["components"] = result["components"]
+                    state["resource_slots"] = result["resource_slots"]
+                except Exception as exc:  # noqa: BLE001
+                    print(f"[VLM] Failed to populate resources on stop action: {exc}", file=sys.stderr)
+
+            buttons = _build_buttons_from_state(state["resource_slots"])
+            resource_note = _summarize_resources(state["resource_slots"])
+
+            response_payload = {
+                "status": processing.get("status", "ok"),
+                "mode": state["mode"],
+                "message": "Jarvis stopped." if not resource_note else resource_note,
+                "recording": {"recording": False, "path": state.get("last_recording")},
+            }
+            if buttons:
+                response_payload["buttons"] = buttons
+            response_payload.update(processing)
+            return response_payload
+
+        state["mode"] = "idle"
+        return {"status": "ok", "mode": state["mode"], "message": "Jarvis stopped."}
 
     elif action.action.startswith("resource_"):
         slot = action.action  # "resource_1", "resource_2", ...
@@ -464,7 +746,7 @@ def handle_console_action(action: ConsoleAction):
         }
 
     elif action.action == "scroll_component":
-        # dial rotation – your UI can use this later to move selection
+        # dial rotation - your UI can use this later to move selection
         return {
             "status": "ok",
             "mode": state["mode"],

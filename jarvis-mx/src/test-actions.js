@@ -1,5 +1,6 @@
 // src/test-actions.js
 import { CommandAction, AdjustmentAction } from '@logitech/plugin-sdk';
+import { exec } from 'node:child_process';
 
 const BACKEND_URL = 'http://localhost:8000/console/action';
 
@@ -23,35 +24,34 @@ async function sendToBackend(payload) {
   }
 }
 
-// K1: Scan 
-export class ScanAction extends CommandAction {
-  name = 'jarvis_scan';
-  displayName = 'Scan';
-  description = 'Analyse the scene and detect components';
-  groupName = 'Jarvis';
-
-  async onKeyDown(event) {
-    console.log('Jarvis: Scan pressed');
-    const result = await sendToBackend({
-      device: 'keypad',
-      control: 'scan',
-      event: 'press',
-      action: 'scan',
-    });
-
-    console.log('Scan result from backend:', result);
-
-    // TODO: if you find in the SDK how to update key labels/icons,
-    // this is where you’d loop over result.buttons and call
-    // event.setTitle(...) / event.setImage(...).
+function logButtonsMetadata(result) {
+  if (result && Array.isArray(result.buttons)) {
+    console.log('Buttons for current scene:', result.buttons);
+    // TODO: Update key labels/icons dynamically when SDK runtime updates are available.
   }
 }
 
-// K2: Talk
+function openUrl(url) {
+  if (!url) return;
+  const command =
+    process.platform === 'win32'
+      ? `cmd /c start "" "${url}"`
+      : process.platform === 'darwin'
+      ? `open "${url}"`
+      : `xdg-open "${url}"`;
+
+  exec(command, (err) => {
+    if (err) {
+      console.error('Failed to open URL:', url, err);
+    }
+  });
+}
+
+// Talk toggle (single key)
 export class TalkAction extends CommandAction {
   name = 'jarvis_talk';
   displayName = 'Talk';
-  description = 'Start voice interaction with Jarvis';
+  description = 'Start/stop voice interaction with Jarvis';
   groupName = 'Jarvis';
 
   async onKeyDown(event) {
@@ -63,10 +63,30 @@ export class TalkAction extends CommandAction {
       action: 'talk',
     });
     console.log('Talk result from backend:', result);
+    logButtonsMetadata(result);
   }
 }
 
-//K3: Resource 1 
+// Stop button (explicit stop)
+export class StopAction extends CommandAction {
+  name = 'jarvis_stop';
+  displayName = 'Stop';
+  description = 'Stop listening/TTs';
+  groupName = 'Jarvis';
+
+  async onKeyDown(event) {
+    console.log('Jarvis: Stop pressed');
+    const result = await sendToBackend({
+      device: 'keypad',
+      control: 'stop',
+      event: 'press',
+      action: 'stop',
+    });
+    console.log('Stop result from backend:', result);
+  }
+}
+
+// Resource 1
 export class Resource1Action extends CommandAction {
   name = 'jarvis_resource_1';
   displayName = 'Resource 1';
@@ -83,10 +103,14 @@ export class Resource1Action extends CommandAction {
     });
     console.log('Resource 1 result:', result);
     // result.url contains manual/video URL. Your UI can use this.
+    if (result && result.url) {
+      console.log('Opening Resource 1 URL:', result.url);
+      openUrl(result.url);
+    }
   }
 }
 
-//K4: Resource 2 
+// Resource 2
 export class Resource2Action extends CommandAction {
   name = 'jarvis_resource_2';
   displayName = 'Resource 2';
@@ -102,10 +126,14 @@ export class Resource2Action extends CommandAction {
       action: 'resource_2',
     });
     console.log('Resource 2 result:', result);
+    if (result && result.url) {
+      console.log('Opening Resource 2 URL:', result.url);
+      openUrl(result.url);
+    }
   }
 }
 
-//K5: Resource 3 
+// Resource 3
 export class Resource3Action extends CommandAction {
   name = 'jarvis_resource_3';
   displayName = 'Resource 3';
@@ -121,10 +149,14 @@ export class Resource3Action extends CommandAction {
       action: 'resource_3',
     });
     console.log('Resource 3 result:', result);
+    if (result && result.url) {
+      console.log('Opening Resource 3 URL:', result.url);
+      openUrl(result.url);
+    }
   }
 }
 
-//Dial: scroll components 
+// Dial: scroll components
 export class ScrollComponentAdjustment extends AdjustmentAction {
   name = 'jarvis_scroll_component';
   displayName = 'Scroll Components';
@@ -133,7 +165,7 @@ export class ScrollComponentAdjustment extends AdjustmentAction {
 
   async execute(event) {
     const direction = event.tick > 0 ? 1 : -1;
-    console.log('Jarvis: Scroll component', event.tick, '→ dir', direction);
+    console.log('Jarvis: Scroll component', event.tick, 'dir', direction);
 
     const result = await sendToBackend({
       device: 'dialpad',
