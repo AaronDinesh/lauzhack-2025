@@ -13,6 +13,7 @@ TOOL_GUIDANCE: Sequence[tuple[str, str]] = (
         "Break the process into logical steps. "
         "IMPORTANT: The 'prompt' field must be strictly a SINGULAR word (e.g., use 'ram stick' instead of 'ram sticks', or 'ram slot' instead of 'ram slots')."
         "IMPORTANT: the prompt should remain precise, make sure to use 'ram slot' or 'ram stick' instead of just using the word 'ram'. Do not use underscore or any other special characters."
+        "prompt field examples: 'a tree', 'man', 'cpu cooler', 'blue bowl', 'phone'"
         "Use the 'instruction' field to provide the user with the text for that step.",
     ),
     (

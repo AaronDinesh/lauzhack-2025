@@ -3,17 +3,19 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from pathlib import Path
 import threading
 import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Tuple
 
-from openai import AsyncOpenAI
 import httpx
+from openai import AsyncOpenAI
 
-from assistant_plan import AssistantPlan
+from assistant_plan import AssistantPlan, encode_image
 
 BUILTIN_TOOLS = [{"type": "web_search"}]
+SAM_SEGMENTATION_URL = os.getenv("SAM_SEGMENTATION_URL", "http://172.20.10.3:8001/infer")
 
 
 def _fetch_ifixit(query: str, limit: int) -> List[Dict[str, str]]:
@@ -100,21 +102,32 @@ class ToolExecutor:
                 print(f"- {guide.get('title','')} :: {guide.get('url','')}")
         return query, guides
 
-    async def _run_segmentation(self, prompt: str, image_path: str = None, base64_image: str = None) -> Tuple[str, Dict[str, Any]]:
+    async def _run_segmentation(
+        self,
+        prompt: str,
+        image_path: str | None = None,
+        base64_image: str | None = None,
+    ) -> Tuple[str, Dict[str, Any]]:
         print(f"\n[Tool] segmentation -> '{prompt}'")
-        sam_api_url = "http://localhost:8000/infer"
+        sam_api_url = SAM_SEGMENTATION_URL
         
         payload = {
             "prompt": prompt,
             "do_plot": True
         }
-        if image_path:
+        encoded_image = base64_image
+        if not encoded_image and image_path:
+            try:
+                encoded_image = encode_image(Path(image_path))
+            except Exception as exc:  # noqa: BLE001
+                print(f"   Warning: failed to encode image {image_path}: {exc}")
+        if encoded_image:
+            payload["base64_image"] = encoded_image
+        elif image_path:
             payload["image_path"] = image_path
-        elif base64_image:
-            payload["base64_image"] = base64_image
         else:
-             print("   Error: No image provided for segmentation.")
-             return prompt, {"error": "No image provided"}
+            print("   Error: No image provided for segmentation.")
+            return prompt, {"error": "No image provided"}
 
         try:
             async with httpx.AsyncClient(timeout=60.0) as http_client:
@@ -127,7 +140,13 @@ class ToolExecutor:
             print(f"   SAM API failed: {e}")
             return prompt, {"error": str(e)}
 
-    async def _execute_plan(self, plan: AssistantPlan, screenshot_path: str = None, status_callback=None) -> Dict[str, List[Any]]:
+    async def _execute_plan(
+        self,
+        plan: AssistantPlan,
+        screenshot_path: str | None = None,
+        screenshot_base64: str | None = None,
+        status_callback=None,
+    ) -> Dict[str, List[Any]]:
         tasks: List[asyncio.Task] = []
         
         for call in plan.tool_calls:
@@ -146,7 +165,7 @@ class ToolExecutor:
             elif call.tool == "segmentation":
                 prompt = call.input.get("prompt", "")
                 img_path = call.input.get("image_path") or screenshot_path
-                b64_img = call.input.get("base64_image")
+                b64_img = call.input.get("base64_image") or screenshot_base64
                 tasks.append(asyncio.create_task(self._run_segmentation(prompt, img_path, b64_img)))
 
         collected: Dict[str, List[Any]] = {}
@@ -212,9 +231,18 @@ class ToolExecutor:
         except Exception as exc:  # noqa: BLE001
             print(f"[ToolExecutor] Failed to update resource buttons: {exc}")
 
-    def submit(self, plan: AssistantPlan, screenshot_path: str = None, status_callback=None) -> None:
+    def submit(
+        self,
+        plan: AssistantPlan,
+        screenshot_path: str | None = None,
+        screenshot_base64: str | None = None,
+        status_callback=None,
+    ) -> None:
         """Fire-and-forget execution of tool calls."""
-        asyncio.run_coroutine_threadsafe(self._execute_plan(plan, screenshot_path, status_callback), self._loop)
+        asyncio.run_coroutine_threadsafe(
+            self._execute_plan(plan, screenshot_path, screenshot_base64, status_callback),
+            self._loop,
+        )
 
     def shutdown(self) -> None:
         self._loop.call_soon_threadsafe(self._loop.stop)

@@ -26,7 +26,12 @@ from camera.helpers import (
     save_frame_to_logs,
     build_image_content,
 )
-from assistant_plan import AssistantPlan, build_system_prompt, parse_assistant_plan_response
+from assistant_plan import (
+    AssistantPlan,
+    build_system_prompt,
+    parse_assistant_plan_response,
+    encode_image,
+)
 from tool_executor import ToolExecutor
 
 load_dotenv()
@@ -168,7 +173,11 @@ def _handle_tool_status_update(message: str) -> None:
         state["active_tools"] = []
 
 
-def _dispatch_tool_plan(plan: AssistantPlan, screenshot_path: Path) -> None:
+def _dispatch_tool_plan(
+    plan: AssistantPlan,
+    screenshot_path: Path,
+    screenshot_base64: str | None,
+) -> None:
     if not plan.tool_calls:
         _reset_tool_state(clear_status=True)
         return
@@ -186,7 +195,12 @@ def _dispatch_tool_plan(plan: AssistantPlan, screenshot_path: Path) -> None:
         state["active_tools"] = []
         return
 
-    tool_executor.submit(plan, str(screenshot_path), status_callback=_handle_tool_status_update)
+    tool_executor.submit(
+        plan,
+        str(screenshot_path),
+        screenshot_base64,
+        status_callback=_handle_tool_status_update,
+    )
 
 
 def _get_ui_frame_bytes(max_age: float = 1.5) -> Optional[bytes]:
@@ -361,10 +375,15 @@ def _process_recording(audio_path: Path) -> Dict[str, Any]:
     if transcript.lower() in EXIT_PHRASES:
         return {"status": "ok", "transcript": transcript, "message": "Exit phrase detected."}
 
+    screenshot_b64: Optional[str] = None
     try:
         content, screenshot_path = fetch_frame_with_context(transcript)
         step_start = _log_step_duration("fetch_frame_with_context", step_start)
         print(f"[Pipeline] Captured screenshot at {screenshot_path}")
+        try:
+            screenshot_b64 = encode_image(screenshot_path)
+        except Exception as encode_exc:  # noqa: BLE001
+            print(f"[Pipeline] Failed to encode screenshot: {encode_exc}", file=sys.stderr)
     except Exception as exc:
         return {
             "status": "error",
@@ -422,7 +441,7 @@ def _process_recording(audio_path: Path) -> Dict[str, Any]:
     if plan:
         plan_dict = plan.model_dump()
         state["last_plan"] = plan_dict
-        _dispatch_tool_plan(plan, screenshot_path)
+        _dispatch_tool_plan(plan, screenshot_path, screenshot_b64)
     else:
         state["last_plan"] = None
 
