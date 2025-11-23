@@ -36,6 +36,7 @@ dependencies = [
     "fastapi>=0.121.3",
     "uvicorn>=0.38.0",
     "requests>=2.32.5",
+    "pyzmq>=26.2.0",
 ]
 
 [[tool.uv.index]]
@@ -51,7 +52,7 @@ torchvision = [
 torch = [
   { index = "pytorch-gpu"},
 ]
-sam3 = { workspace = true, editable = true }
+sam3 = { workspace = true}
 
 [tool.uv.workspace]
 members = [
@@ -60,5 +61,3 @@ members = [
 
 [tool.uv]
 override-dependencies = ["numpy>=2.2.6"]
-
-

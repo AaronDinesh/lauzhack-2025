@@ -14,15 +14,19 @@ export default function Home() {
   };
 
   const initialPanelUrl =
-    sanitizeUrl(process.env.NEXT_PUBLIC_PANEL_URL) || 'https://example.com';
+    sanitizeUrl(process.env.NEXT_PUBLIC_PANEL_URL) || 'https://google.com';
   const [panelVisible, setPanelVisible] = useState(false);
   const [panelUrl, setPanelUrl] = useState<string>(initialPanelUrl);
   const [isResizing, setIsResizing] = useState(false);
   const [controlBarHeight, setControlBarHeight] = useState(0);
   const [isElectron, setIsElectron] = useState(false);
   const [bridgeEndpoint, setBridgeEndpoint] = useState(
-    process.env.NEXT_PUBLIC_MX_BRIDGE_URL || 'http://127.0.0.1:8000/stream'
+    process.env.NEXT_PUBLIC_MX_BRIDGE_URL || ''
   );
+  const DEFAULT_BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://127.0.0.1:8000';
+  const [backendUrl, setBackendUrl] = useState(DEFAULT_BACKEND_URL);
+  const DEFAULT_FRAME_ENDPOINT = process.env.NEXT_PUBLIC_FRAME_ENDPOINT || 'tcp://127.0.0.1:5557';
+  const [frameEndpoint, setFrameEndpoint] = useState(DEFAULT_FRAME_ENDPOINT);
   const [mockMode, setMockMode] = useState(false);
   const [dockSide, setDockSide] = useState<'left' | 'right'>('right');
   const [workspaceSplit, setWorkspaceSplit] = useState(70); // percentage for camera
@@ -36,6 +40,12 @@ export default function Home() {
       setIsElectron(Boolean(window.electronAPI));
     }
   }, []);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.electronAPI?.setFrameEndpoint) {
+      window.electronAPI.setFrameEndpoint(frameEndpoint);
+    }
+  }, [frameEndpoint]);
 
   useLayoutEffect(() => {
     if (!controlBarRef.current) return;
@@ -134,6 +144,10 @@ export default function Home() {
   const [panelDetachedForSettings, setPanelDetachedForSettings] = useState(false);
   const [statusItems, setStatusItems] = useState<StatusItem[]>([]);
   const [isRecording, setIsRecording] = useState(false);
+  const statusPollRef = useRef<NodeJS.Timeout | null>(null);
+  const lastModeRef = useRef<string | null>(null);
+  const lastTranscriptRef = useRef<string | null>(null);
+  const lastResponseRef = useRef<string | null>(null);
 
   const pushStatus = useCallback(
     (item: Omit<StatusItem, 'id' | 'ts'> & { id?: string; ts?: number }) => {
@@ -152,7 +166,7 @@ export default function Home() {
 
       if (normalized.includes('talk_start') || normalized === 'talk_start') {
         setIsRecording(true);
-        pushStatus({ label: 'Recording…', tone: 'warning' });
+        pushStatus({ label: 'Recording...', tone: 'warning' });
         return;
       }
 
@@ -171,6 +185,49 @@ export default function Home() {
     },
     [pushStatus]
   );
+
+  useEffect(() => {
+    const pollStatus = async () => {
+      if (!backendUrl || !backendUrl.trim()) {
+        return;
+      }
+      try {
+        const res = await fetch(`${backendUrl.replace(/\/$/, '')}/status`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (typeof data === 'object' && data) {
+          if (typeof data.talking === 'boolean') {
+            setIsRecording(Boolean(data.talking));
+          }
+          if (data.mode && data.mode !== lastModeRef.current) {
+            lastModeRef.current = data.mode;
+            pushStatus({
+              label: `Mode: ${data.mode}`,
+              tone: data.mode === 'talking' ? 'warning' : 'info',
+            });
+          }
+          if (data.last_transcript && data.last_transcript !== lastTranscriptRef.current) {
+            lastTranscriptRef.current = data.last_transcript;
+            pushStatus({ label: 'You said', detail: data.last_transcript, tone: 'info' });
+          }
+          if (data.last_response && data.last_response !== lastResponseRef.current) {
+            lastResponseRef.current = data.last_response;
+            pushStatus({ label: 'Jarvis responded', detail: data.last_response, tone: 'success' });
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch status:', err);
+      }
+    };
+
+    pollStatus();
+    statusPollRef.current = setInterval(pollStatus, 5000);
+    return () => {
+      if (statusPollRef.current) {
+        clearInterval(statusPollRef.current);
+      }
+    };
+  }, [backendUrl, pushStatus]);
 
   const handleSettingsVisibilityChange = useCallback(
     (open: boolean) => {
@@ -245,10 +302,14 @@ export default function Home() {
         connected={connected}
         bridgeError={bridgeError}
         bridgeEndpoint={bridgeEndpoint}
+        backendUrl={backendUrl}
+        frameEndpoint={frameEndpoint}
         mockMode={mockMode}
         panelUrl={panelUrl}
         panelVisible={panelVisible}
         onSetBridgeEndpoint={setBridgeEndpoint}
+        onSetBackendUrl={setBackendUrl}
+        onSetFrameEndpoint={setFrameEndpoint}
         onToggleMockMode={() => setMockMode(!mockMode)}
         onMockSetUrl={handleMockSetUrl}
         onPanelUrlChange={setPanelUrl}
@@ -296,7 +357,7 @@ export default function Home() {
         )}
 
         <div className="min-w-0">
-          <CameraView width={100} />
+          <CameraView width={100} frameEndpoint={frameEndpoint} />
         </div>
 
         {dockSide === 'right' && panelVisible && (

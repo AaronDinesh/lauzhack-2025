@@ -1,6 +1,43 @@
 const { app, BrowserWindow, BrowserView, ipcMain } = require('electron');
 const path = require('path');
 const isDev = process.env.NODE_ENV === 'development';
+let zmq = null;
+try {
+  // eslint-disable-next-line global-require, import/no-extraneous-dependencies
+  zmq = require('zeromq');
+} catch (err) {
+  console.warn('[ZMQ] zeromq module not available. Frame streaming disabled.', err?.message || err);
+}
+const DEFAULT_FRAME_ENDPOINT = process.env.FRAME_ZMQ_URL || 'tcp://127.0.0.1:5557';
+let frameEndpoint = DEFAULT_FRAME_ENDPOINT;
+let frameSocket = null;
+
+async function ensureFrameSocket() {
+  if (!zmq) {
+    throw new Error('zeromq module not installed');
+  }
+  if (!frameSocket) {
+    frameSocket = new zmq.Push();
+    await frameSocket.connect(frameEndpoint);
+    console.log(`[ZMQ] Connected to ${frameEndpoint}`);
+  }
+}
+
+async function resetFrameSocket(endpoint) {
+  frameEndpoint = endpoint && endpoint.trim() ? endpoint.trim() : DEFAULT_FRAME_ENDPOINT;
+  if (frameSocket) {
+    try {
+      frameSocket.close();
+    } catch (err) {
+      console.warn('[ZMQ] Failed to close previous socket', err);
+    }
+    frameSocket = null;
+  }
+  if (zmq) {
+    await ensureFrameSocket();
+  }
+  return frameEndpoint;
+}
 
 const sanitizeUrl = (url) => {
   if (!url) return '';
@@ -192,6 +229,44 @@ function createWindow() {
     }
   });
 
+  ipcMain.handle('frame:send', async (_event, payload) => {
+    if (!zmq || !payload) {
+      return false;
+    }
+    try {
+      await ensureFrameSocket();
+      let buffer;
+      if (Buffer.isBuffer(payload)) {
+        buffer = payload;
+      } else if (payload instanceof Uint8Array) {
+        buffer = Buffer.from(payload);
+      } else if (payload?.buffer) {
+        buffer = Buffer.from(new Uint8Array(payload.buffer));
+      } else if (Array.isArray(payload)) {
+        buffer = Buffer.from(payload);
+      } else {
+        buffer = Buffer.from(payload);
+      }
+      await frameSocket.send(buffer);
+      return true;
+    } catch (err) {
+      console.error('[ZMQ] Failed to send frame:', err);
+      return false;
+    }
+  });
+
+  ipcMain.handle('frame:setEndpoint', async (_event, endpoint) => {
+    if (!zmq) {
+      return endpoint;
+    }
+    try {
+      return await resetFrameSocket(endpoint);
+    } catch (err) {
+      console.error('[ZMQ] Failed to reset frame endpoint:', err);
+      return frameEndpoint;
+    }
+  });
+
   mainWindow.on('resize', () => {
     if (panelVisible) {
       updatePanelBounds();
@@ -222,6 +297,11 @@ function createWindow() {
 
 app.whenReady().then(() => {
   createWindow();
+  if (zmq) {
+    ensureFrameSocket().catch((err) => {
+      console.error('[ZMQ] Unable to connect frame socket:', err);
+    });
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -231,6 +311,14 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
+  if (frameSocket) {
+    try {
+      frameSocket.close();
+    } catch (err) {
+      console.warn('[ZMQ] Error closing socket', err);
+    }
+    frameSocket = null;
+  }
   if (process.platform !== 'darwin') {
     app.quit();
   }
