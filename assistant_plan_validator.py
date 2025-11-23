@@ -207,6 +207,9 @@ async def _execute_tool_calls_async(
     # multiple segmentation calls (Step 1, Step 2, Step 3).
     for call in plan.tool_calls:
         
+        if call.instruction:
+            print(f"\n[Instruction] {call.instruction}")
+
         if call.tool == "web_search":
             # Note: We cast input to dict because our updated ToolCall validator converts it
             input_data = call.input if isinstance(call.input, dict) else call.input.model_dump()
