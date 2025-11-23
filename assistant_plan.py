@@ -11,7 +11,9 @@ TOOL_GUIDANCE: Sequence[tuple[str, str]] = (
         "segmentation",
         "For tutorials, generate a sequence of multiple tool calls to create a step-by-step guide. "
         "Break the process into logical steps. "
-        "IMPORTANT: The 'prompt' field must be strictly a SINGULAR word (e.g., use 'ram stick' instead of 'ram sticks', or 'ram slot' instead of 'ram slots').",
+        "IMPORTANT: The 'prompt' field must be strictly a SINGULAR word (e.g., use 'ram stick' instead of 'ram sticks', or 'ram slot' instead of 'ram slots')."
+        "IMPORTANT: the prompt should remain precise, make sure to use 'ram slot' or 'ram stick' instead of just using the word 'ram'. Do not use underscore or any other special characters."
+        "Use the 'instruction' field to provide the user with the text for that step.",
     ),
     (
         "web_search",
@@ -103,6 +105,7 @@ class ToolInput(BaseModel):
 class ToolCall(BaseModel):
     tool: Literal["segmentation", "web_search", "ifixit_tutorials"]
     rationale: str = Field(..., description="The rationale for calling the tool.")
+    instruction: Optional[str] = Field(None, description="The instruction to show to the user for this step (e.g. 'Place the RAM in the slot').")
     input: ToolInput = Field(..., description="Tool-specific arguments.") # Initially defined as ToolInput
 
     @model_validator(mode="after")
@@ -112,7 +115,10 @@ class ToolCall(BaseModel):
         and converts self.input into a dictionary for easier execution.
         """
         # Convert the unified ToolInput model to a dict, removing None values
-        payload = self.input.model_dump(exclude_none=True)
+        if isinstance(self.input, dict):
+            payload = {k: v for k, v in self.input.items() if v is not None}
+        else:
+            payload = self.input.model_dump(exclude_none=True)
 
         if self.tool == "segmentation":
             # Validates that 'prompt' exists and structure matches Sam3Input
