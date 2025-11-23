@@ -16,6 +16,10 @@ TOOL_GUIDANCE: Sequence[tuple[str, str]] = (
         "web_search",
         "Use OpenAI web_search when you need live web resources or troubleshooting links. Provide query and optional max_results (1-10) in your plan.",
     ),
+    (
+        "ifixit_tutorials",
+        "Use iFixit tutorials when you need repair guides. Provide query and optional limit (1-10).",
+    ),
 )
 
 
@@ -33,6 +37,16 @@ class WebSearchInput(BaseModel):
         ge=1,
         le=10,
         description="Maximum number of links to return.",
+    )
+
+
+class IFixitInput(BaseModel):
+    query: str = Field(..., description="Search query for iFixit guides.")
+    limit: int = Field(
+        3,
+        ge=1,
+        le=10,
+        description="Maximum number of tutorials to return.",
     )
 
 
@@ -55,12 +69,16 @@ class ToolInput(BaseModel):
         None,
         description="Search result limit.",
     )
+    limit: Optional[int] = Field(
+        None,
+        description="iFixit tutorials result limit.",
+    )
 
     model_config = ConfigDict(extra="forbid")
 
 
 class ToolCall(BaseModel):
-    tool: Literal["segmentation", "web_search"]
+    tool: Literal["segmentation", "web_search", "ifixit_tutorials"]
     rationale: str = Field(..., description="The rationale for calling the tool.")
     input: ToolInput = Field(..., description="Tool-specific arguments.")
 
@@ -72,6 +90,8 @@ class ToolCall(BaseModel):
             self.input = Sam3Input.model_validate(payload).model_dump()
         elif self.tool == "web_search":
             self.input = WebSearchInput.model_validate(payload).model_dump()
+        elif self.tool == "ifixit_tutorials":
+            self.input = IFixitInput.model_validate(payload).model_dump()
         return self
 
 

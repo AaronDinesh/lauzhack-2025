@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -48,6 +51,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default=5,
         help="Max links to return when executing the web_search tool.",
     )
+    parser.add_argument(
+        "--ifixit-limit",
+        type=int,
+        default=3,
+        help="Max tutorials to return when executing the ifixit_tutorials tool.",
+    )
     return parser
 
 
@@ -65,8 +74,8 @@ def _build_user_content(prompt: str, screenshot: Path | None) -> List[Dict[str, 
 
 
 async def _execute_tool_calls_async(
-    plan: AssistantPlan, max_results: int, model: str
-) -> Dict[str, List[str]]:
+    plan: AssistantPlan, max_results: int, ifixit_limit: int, model: str
+) -> Dict[str, List[Any]]:
     client = AsyncOpenAI()
 
     async def run_search(query: str, max_items: int) -> Tuple[str, List[str]]:
@@ -98,15 +107,56 @@ async def _execute_tool_calls_async(
 
         return query, urls
 
-    tasks: List[asyncio.Task[Tuple[str, List[str]]]] = []
-    for call in plan.tool_calls:
-        if call.tool != "web_search":
-            continue
-        query = call.input.get("query", "")
-        max_items = int(call.input.get("max_results") or max_results)
-        tasks.append(asyncio.create_task(run_search(query, max_items)))
+    def fetch_ifixit(query: str, limit: int) -> List[Dict[str, str]]:
+        base_url = "https://www.ifixit.com/api/2.0/suggest/"
+        encoded_query = urllib.parse.quote(query)
+        params = urllib.parse.urlencode({"doctypes": "guide", "limit": limit + 2})
+        request_url = f"{base_url}{encoded_query}?{params}"
 
-    collected: Dict[str, List[str]] = {}
+        try:
+            with urllib.request.urlopen(request_url, timeout=10) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+        except Exception:
+            return []
+
+        guides: List[Dict[str, str]] = []
+        for item in payload.get("results", []):
+            if item.get("dataType") != "guide":
+                continue
+            guides.append(
+                {
+                    "title": item.get("title", "Unknown Guide"),
+                    "url": item.get("url", ""),
+                    "difficulty": item.get("difficulty", "Unknown"),
+                    "image": (item.get("image") or {}).get("standard", ""),
+                    "summary": item.get("summary", "No summary available"),
+                }
+            )
+            if len(guides) >= limit:
+                break
+        return guides
+
+    async def run_ifixit(query: str, limit: int) -> Tuple[str, List[Dict[str, str]]]:
+        print(f"\n[Tool] ifixit_tutorials -> {query!r} (limit={limit})")
+        urls = await asyncio.to_thread(fetch_ifixit, query, limit)
+        if urls:
+            print("iFixit guides:")
+            for guide in urls:
+                print(f"- {guide.get('title','')} :: {guide.get('url','')}")
+        return query, urls
+
+    tasks: List[asyncio.Task[Tuple[str, List[Any]]]] = []
+    for call in plan.tool_calls:
+        if call.tool == "web_search":
+            query = call.input.get("query", "")
+            max_items = int(call.input.get("max_results") or max_results)
+            tasks.append(asyncio.create_task(run_search(query, max_items)))
+        elif call.tool == "ifixit_tutorials":
+            query = call.input.get("query", "")
+            limit = int(call.input.get("limit") or ifixit_limit)
+            tasks.append(asyncio.create_task(run_ifixit(query, limit)))
+
+    collected: Dict[str, List[Any]] = {}
     if tasks:
         results = await asyncio.gather(*tasks)
         for query, urls in results:
@@ -146,13 +196,18 @@ async def amain() -> None:
     print(plan.model_dump_json(indent=2))
 
     if args.execute_tools and plan.tool_calls:
-        urls_by_query = await _execute_tool_calls_async(plan, args.max_results, args.model)
-        # if urls_by_query:
-        #     print("\nCollected URLs by query:")
-        #     for query, urls in urls_by_query.items():
-        #         print(f"- {query}:")
-        #         for url in urls:
-        #             print(f"  {url}")
+        urls_by_query = await _execute_tool_calls_async(
+            plan, args.max_results, args.ifixit_limit, args.model
+        )
+        if urls_by_query:
+            print("\nCollected URLs by query:")
+            for query, urls in urls_by_query.items():
+                print(f"- {query}:")
+                for url in urls:
+                    if isinstance(url, dict):
+                        print(f"  {url.get('title','')} :: {url.get('url','')}")
+                    else:
+                        print(f"  {url}")
     elif args.execute_tools:
         print("\nNo tool calls requested by the assistant.")
 
