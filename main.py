@@ -14,6 +14,12 @@ from audio.recorder import record_press_to_speak
 from audio.speech_to_text import transcribe_file_sync
 from audio.text_to_speech import speak_text
 from camera.helpers import FrameCache, capture_with_context
+from assistant_plan import (
+    AssistantPlan,
+    build_system_prompt,
+    parse_assistant_plan_response,
+)
+from tool_executor import ToolExecutor
 
 
 def _extract_first_text(response_dict: Dict[str, Any]) -> str:
@@ -72,65 +78,24 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _stream_assistant_text(
-    client: OpenAI,
-    *,
-    model: str,
-    conversation: List[Dict[str, Any]],
-    reasoning: Dict[str, Any] | None = None,
-) -> str:
-    request_kwargs: Dict[str, Any] = {
-        "model": model,
-        "input": conversation,
-    }
-    if reasoning:
-        request_kwargs["reasoning"] = reasoning
-
-    text_chunks: List[str] = []
-    final_response: Any | None = None
-
-    with client.responses.stream(**request_kwargs) as stream:
-        for event in stream:
-            if event.type == "response.output_text.delta":
-                text_chunks.append(event.delta)
-            elif event.type == "response.error":
-                error = getattr(event, "error", None)
-                message = "OpenAI streaming error"
-                if isinstance(error, dict):
-                    message = error.get("message") or message
-                raise RuntimeError(message)
-
-        final_response = stream.get_final_response()
-
-    assistant_text = "".join(text_chunks).strip()
-    if assistant_text:
-        return assistant_text
-
-    response_dict: Dict[str, Any] = {}
-    if final_response is not None:
-        if hasattr(final_response, "model_dump"):
-            response_dict = final_response.model_dump()  # type: ignore[assignment]
-        elif hasattr(final_response, "to_dict"):
-            response_dict = final_response.to_dict()  # type: ignore[assignment]
-
-    return _extract_first_text(response_dict)
-
-
 def main() -> None:
     load_dotenv()
     args = _build_parser().parse_args()
 
     client = OpenAI()
+    tool_executor = ToolExecutor(
+        model=args.model, max_web_results=5, ifixit_limit=3
+    )
     exit_phrases = {phrase.lower() for phrase in args.exit_phrases}
 
     conversation: List[Dict[str, Any]] = []
-    if args.system_prompt:
-        conversation.append(
-            {
-                "role": "system",
-                "content": [{"type": "input_text", "text": args.system_prompt}],
-            }
-        )
+    system_prompt = args.system_prompt or build_system_prompt()
+    conversation.append(
+        {
+            "role": "system",
+            "content": [{"type": "input_text", "text": system_prompt}],
+        }
+    )
 
     frame_cache: FrameCache | None = None
     try:
@@ -199,22 +164,20 @@ def main() -> None:
             conversation.append({"role": "user", "content": content})
 
             try:
-                assistant_text = _stream_assistant_text(
-                    client,
+                plan_response = client.responses.parse(
                     model=args.model,
-                    conversation=conversation,
+                    input=conversation,
+                    text_format=AssistantPlan,
                     reasoning={"effort": "minimal"},
                 )
-                step_start = _log_step_duration("responses.stream", step_start)
+                step_start = _log_step_duration("responses.parse", step_start)
+                plan = parse_assistant_plan_response(plan_response)
             except Exception as exc:
-                print(f"OpenAI streaming failed: {exc}", file=sys.stderr)
+                print(f"OpenAI planning failed: {exc}", file=sys.stderr)
                 conversation.pop()
                 continue
 
-            if not assistant_text:
-                print("Assistant returned no text output.", file=sys.stderr)
-                continue
-
+            assistant_text = plan.voice
             print(f"Assistant: {assistant_text}")
             conversation.append(
                 {
@@ -236,7 +199,12 @@ def main() -> None:
                 step_start = _log_step_duration("audio.playback", step_start)
                 total_elapsed = perf_counter() - iteration_start
                 print(f"[Pipeline] total_turn took {total_elapsed:.2f}s")
+
+            # Dispatch tool calls asynchronously in the background
+            if plan.tool_calls:
+                tool_executor.submit(plan)
     finally:
+        tool_executor.shutdown()
         if frame_cache:
             frame_cache.stop()
 
