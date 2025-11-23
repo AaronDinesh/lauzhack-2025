@@ -6,10 +6,12 @@ interface ControlBarProps {
   connected: boolean;
   bridgeError: string | null;
   bridgeEndpoint: string;
+  backendUrl: string;
   mockMode: boolean;
   panelUrl: string;
   panelVisible: boolean;
   onSetBridgeEndpoint: (endpoint: string) => void;
+  onSetBackendUrl: (url: string) => void;
   onToggleMockMode: () => void;
   onMockSetUrl: () => void;
   onPanelUrlChange: (url: string) => void;
@@ -23,10 +25,12 @@ const ControlBar = forwardRef<HTMLDivElement, ControlBarProps>(function ControlB
   connected,
   bridgeError,
   bridgeEndpoint,
+  backendUrl,
   mockMode,
   panelUrl,
   panelVisible,
   onSetBridgeEndpoint,
+  onSetBackendUrl,
   onToggleMockMode,
   onMockSetUrl,
   onPanelUrlChange,
@@ -37,6 +41,7 @@ const ControlBar = forwardRef<HTMLDivElement, ControlBarProps>(function ControlB
 ref) {
   const [showSettings, setShowSettings] = useState(false);
   const [endpointInput, setEndpointInput] = useState(bridgeEndpoint);
+  const [backendUrlInput, setBackendUrlInput] = useState(backendUrl);
   const [panelUrlInput, setPanelUrlInput] = useState(panelUrl);
 
   useEffect(() => {
@@ -44,11 +49,16 @@ ref) {
   }, [bridgeEndpoint]);
 
   useEffect(() => {
+    setBackendUrlInput(backendUrl);
+  }, [backendUrl]);
+
+  useEffect(() => {
     setPanelUrlInput(panelUrl);
   }, [panelUrl]);
 
   const handleSaveEndpoint = () => {
     onSetBridgeEndpoint(endpointInput);
+    onSetBackendUrl(backendUrlInput);
     setShowSettings(false);
     onSettingsVisibilityChange(false);
   };
@@ -145,14 +155,28 @@ ref) {
             {/* Bridge Endpoint */}
             <div className="mb-4">
               <label className="block text-sm font-medium mb-2">
-                MX Bridge Endpoint (SSE)
+                MX Bridge Endpoint (SSE, optional)
               </label>
               <input
                 type="text"
                 value={endpointInput}
                 onChange={(e) => setEndpointInput(e.target.value)}
                 className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded focus:outline-none focus:ring-2 focus:ring-primary"
-                placeholder="http://127.0.0.1:8000/stream"
+                placeholder="SSE endpoint (leave blank to disable)"
+              />
+            </div>
+
+            {/* Backend Base URL */}
+            <div className="mb-4">
+              <label className="block text-sm font-medium mb-2">
+                MX Backend URL (used for /frame, actions)
+              </label>
+              <input
+                type="text"
+                value={backendUrlInput}
+                onChange={(e) => setBackendUrlInput(e.target.value)}
+                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded focus:outline-none focus:ring-2 focus:ring-primary"
+                placeholder="http://127.0.0.1:8000"
               />
             </div>
 

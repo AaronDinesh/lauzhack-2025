@@ -8,6 +8,7 @@ from typing import Optional, Dict, Any, List
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Response
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from openai import OpenAI
 
@@ -19,6 +20,17 @@ from camera.helpers import FrameCache, capture_with_context, capture_frame
 load_dotenv()
 
 app = FastAPI(title="Jarvis Backend")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 class ConsoleAction(BaseModel):
     action: str
@@ -757,6 +769,20 @@ def handle_console_action(action: ConsoleAction):
     return {"status": "ok", "mode": state["mode"]}
 
 
+@app.get("/status")
+def get_status():
+    """
+    Lightweight endpoint the UI can poll for current state.
+    """
+    return {
+        "mode": state.get("mode", "idle"),
+        "talking": state.get("talk_recording_active", False),
+        "listening": state.get("talk_recording_active", False),
+        "last_transcript": state.get("last_transcript"),
+        "last_response": state.get("last_response"),
+    }
+
+
 @app.get("/frame")
 def get_frame():
     """
@@ -765,6 +791,8 @@ def get_frame():
     jpeg_bytes = None
     if frame_cache:
         jpeg_bytes = frame_cache.get_latest_frame(max_age=0.5)
+        
+        print("[Frame] Served frame from cache" if jpeg_bytes else "[Frame] No recent frame in cache")
 
     if jpeg_bytes is None:
         try:

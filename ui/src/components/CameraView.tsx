@@ -4,11 +4,10 @@ import { useEffect, useRef, useState } from 'react';
 
 interface CameraViewProps {
   width: number; // percentage
+  backendUrl: string;
 }
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://127.0.0.1:8000';
-
-export default function CameraView({ width }: CameraViewProps) {
+export default function CameraView({ width, backendUrl }: CameraViewProps) {
   const [error, setError] = useState<string>('');
   const [imgUrl, setImgUrl] = useState<string>('');
   const [refreshMs, setRefreshMs] = useState<number>(1000);
@@ -16,7 +15,11 @@ export default function CameraView({ width }: CameraViewProps) {
 
   const fetchFrame = async () => {
     try {
-      const url = `${BACKEND_URL.replace(/\/$/, '')}/frame?ts=${Date.now()}`;
+      if (!backendUrl || !backendUrl.trim()) {
+        setError('No backend URL configured');
+        return;
+      }
+      const url = `${backendUrl.replace(/\/$/, '')}/frame`;
       const res = await fetch(url);
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`);
@@ -50,7 +53,7 @@ export default function CameraView({ width }: CameraViewProps) {
         return '';
       });
     };
-  }, [refreshMs]);
+  }, [refreshMs, backendUrl]);
 
   return (
     <div
@@ -59,15 +62,15 @@ export default function CameraView({ width }: CameraViewProps) {
     >
       <div className="flex items-center gap-3 p-4 bg-dark border-b border-gray-800">
         <h2 className="text-lg font-semibold">Camera Feed</h2>
-        <div className="text-xs text-gray-400">Backend: {BACKEND_URL}</div>
+        <div className="text-xs text-gray-400">Backend: {backendUrl || 'not set'}</div>
         <div className="ml-auto flex items-center gap-2">
           <label className="text-xs text-gray-300">Refresh (ms)</label>
           <input
             type="number"
-            min={200}
-            step={200}
+            min={10}
+            step={10}
             value={refreshMs}
-            onChange={(e) => setRefreshMs(Math.max(200, Number(e.target.value) || 1000))}
+            onChange={(e) => setRefreshMs(Math.max(10, Number(e.target.value) || 1000))}
             className="w-20 px-2 py-1 bg-gray-800 border border-gray-700 rounded text-xs"
           />
           <button
@@ -90,7 +93,7 @@ export default function CameraView({ width }: CameraViewProps) {
           <img src={imgUrl} alt="Camera frame" className="max-w-full max-h-full object-contain" />
         ) : (
           <div className="text-gray-500 text-center">
-            <div className="text-lg mb-2">Awaiting frame…</div>
+            <div className="text-lg mb-2">Awaiting frame...</div>
             <p className="text-sm">Ensure the backend camera is running.</p>
           </div>
         )}
