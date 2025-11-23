@@ -3,11 +3,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import urllib.parse
-import urllib.request
-import base64
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
+import urllib.parse
+import urllib.request
 
 # pip install python-dotenv httpx openai
 from dotenv import load_dotenv
@@ -24,6 +24,7 @@ from assistant_plan import (
 
 # Standard OpenAI tools (SAM is handled client-side via tool_calls)
 BUILTIN_TOOLS = [{"type": "web_search"}]
+SAM_SEGMENTATION_URL = os.getenv("SAM_SEGMENTATION_URL", "http://172.20.10.3:8001/infer")
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -65,7 +66,11 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _build_user_content(prompt: str, screenshot: Path | None) -> List[Dict[str, Any]]:
+def _build_user_content(
+    prompt: str,
+    screenshot: Path | None,
+    screenshot_b64: str | None = None,
+) -> List[Dict[str, Any]]:
     content: List[Dict[str, Any]] = [{"type": "input_text", "text": prompt}]
     if screenshot:
         if not screenshot.is_file():
@@ -74,7 +79,7 @@ def _build_user_content(prompt: str, screenshot: Path | None) -> List[Dict[str, 
         # We append the path to the prompt text so the LLM knows what to put in 'image_path'
         content[0]["text"] += f"\n\n(Context: The image is located at: {screenshot.resolve()})"
         
-        image_b64 = encode_image(screenshot)
+        image_b64 = screenshot_b64 or encode_image(screenshot)
         content.append({
             "type": "input_image",
             "image_url": f"data:image/jpeg;base64,{image_b64}",
@@ -83,11 +88,12 @@ def _build_user_content(prompt: str, screenshot: Path | None) -> List[Dict[str, 
 
 
 async def _execute_tool_calls_async(
-    plan: AssistantPlan, 
-    max_results: int, 
-    ifixit_limit: int, 
+    plan: AssistantPlan,
+    max_results: int,
+    ifixit_limit: int,
     model: str,
-    screenshot_path: Path | None = None # Added to support implicit image passing
+    screenshot_path: Path | None = None,
+    screenshot_base64: str | None = None,
 ) -> Dict[str, List[Any]]:
     
     client = AsyncOpenAI()
@@ -164,11 +170,15 @@ async def _execute_tool_calls_async(
         return query, urls
 
     # --- 3. NEW: SAM 3 API Tool (Handles Multiple Steps) ---
-    async def sam_request(prompt: str, image_path: str = None, base64_image: str = None) -> Tuple[str, Dict[str, Any]]:
+    async def sam_request(
+        prompt: str,
+        image_path: str | None = None,
+        base64_image: str | None = None,
+    ) -> Tuple[str, Dict[str, Any]]:
         """
         Sends a request to the local SAM 3 API.
         """
-        sam_api_url = "http://localhost:8000/infer" 
+        sam_api_url = SAM_SEGMENTATION_URL 
         
         print(f"\n[Tool] segmentation -> '{prompt}'")
 
@@ -177,11 +187,16 @@ async def _execute_tool_calls_async(
             "do_plot": True
         }
 
-        # Logic to ensure we have an image source
-        if image_path:
+        encoded_image = base64_image
+        if not encoded_image and image_path:
+            try:
+                encoded_image = encode_image(Path(image_path))
+            except Exception as exc:  # noqa: BLE001
+                print(f"   Warning: failed to encode image {image_path}: {exc}")
+        if encoded_image:
+            payload["base64_image"] = encoded_image
+        elif image_path:
             payload["image_path"] = image_path
-        elif base64_image:
-            payload["base64_image"] = base64_image
         else:
              print("   Error: No image provided for segmentation.")
              return prompt, {"error": "No image provided"}
@@ -229,10 +244,10 @@ async def _execute_tool_calls_async(
             
             prompt_text = input_data.get("prompt", "")
             img_path = input_data.get("image_path")
-            b64_img = input_data.get("base64_image")
+            b64_img = input_data.get("base64_image") or screenshot_base64
 
             # FALLBACK: If LLM didn't provide path, use the CLI arg
-            if not img_path and not b64_img and screenshot_path:
+            if not img_path and screenshot_path:
                 img_path = str(screenshot_path.resolve())
 
             tasks.append(asyncio.create_task(sam_request(prompt_text, img_path, b64_img)))
@@ -262,7 +277,10 @@ async def amain() -> None:
 
     client = AsyncOpenAI()
     system_prompt = build_system_prompt()
-    user_content = _build_user_content(args.prompt, args.screenshot)
+    screenshot_b64: str | None = None
+    if args.screenshot:
+        screenshot_b64 = encode_image(args.screenshot)
+    user_content = _build_user_content(args.prompt, args.screenshot, screenshot_b64)
 
     print("Sending request to LLM...")
     response = await client.responses.parse(
@@ -297,7 +315,8 @@ async def amain() -> None:
             args.max_results, 
             args.ifixit_limit, 
             args.model,
-            screenshot_path=args.screenshot # Pass the path down!
+            screenshot_path=args.screenshot,
+            screenshot_base64=screenshot_b64,
         )
         
         if urls_by_query:
