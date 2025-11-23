@@ -84,7 +84,7 @@ def main() -> None:
 
     client = OpenAI()
     tool_executor = ToolExecutor(
-        model=args.model, max_web_results=5, ifixit_limit=3
+        model=args.model, max_web_results=3, ifixit_limit=3
     )
     exit_phrases = {phrase.lower() for phrase in args.exit_phrases}
 

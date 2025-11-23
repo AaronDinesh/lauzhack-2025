@@ -48,7 +48,7 @@ def _fetch_ifixit(query: str, limit: int) -> List[Dict[str, str]]:
 class ToolExecutor:
     """Runs tool calls on a background asyncio loop."""
 
-    def __init__(self, model: str, max_web_results: int = 5, ifixit_limit: int = 3) -> None:
+    def __init__(self, model: str, max_web_results: int = 3, ifixit_limit: int = 3) -> None:
         self.model = model
         self.max_web_results = max_web_results
         self.ifixit_limit = ifixit_limit
@@ -61,53 +61,30 @@ class ToolExecutor:
         print(f"\n[Tool] web_search -> {query!r} (max_results={max_items})")
         urls: List[str] = []
         try:
-            response = await self._client.chat.completions.create(
+            response = await self._client.responses.create(
                 model=self.model,
                 tools=BUILTIN_TOOLS,
-                messages=[{
-                    "role": "user",
-                    "content": (
-                        f"Find up to {max_items} relevant links for: {query}. "
-                        "Return concise bullet links."
-                    )
-                }],
+                input=(
+                    f"Find up to {max_items} relevant links for: {query}. "
+                    "Return concise bullet links with Markdown URLs."
+                ),
             )
             
-            # Extract URLs from tool calls or content?
-            # The original code used 'annotations' from 'responses' API.
-            # With chat.completions and 'web_search' tool (if it's a built-in tool/plugin), 
-            # we might need to check how the tool results are returned.
-            # BUT, BUILTIN_TOOLS = [{"type": "web_search"}] suggests it's using the OpenAI 'web_search' tool (if available in the model).
-            # If it's a standard model, it might not have 'web_search'.
-            # However, assuming the environment supports it (e.g. ChatGPT model or similar).
-            # Wait, if it's a generic model, 'web_search' might not work unless we provide the tool definition.
-            # The original code used `BUILTIN_TOOLS` with `responses.create`.
-            # If I switch to `chat.completions`, I might lose the built-in web search if it's specific to the `responses` API.
-            
-            # Let's look at the original code again:
-            # urls = [elem["url"] for elem in [x["content"][0]["annotations"] ...]]
-            # This structure is VERY specific to the 'responses' API (likely the 'Computer Use' or 'Agents' beta).
-            
-            # If I cannot use `responses` API because it's broken/flaky, I might need to implement web search differently (e.g. via Tavily or Google).
-            # But I don't have those keys.
-            
-            # Re-evaluating: The error "model output must contain either output text or tool calls" 
-            # MIGHT be because the model didn't find anything or the prompt was weak.
-            
-            # However, if I MUST migrate, I should check if 'web_search' is supported in chat.completions.
-            # It is NOT standard.
-            
-            # If I can't use `responses` for web search, I might be breaking web search.
-            # BUT the user's error was about the MODEL OUTPUT being empty.
-            
-            # Let's try to keep `responses` for web search IF it works, but catch the error better?
-            # Or maybe the error was from `_generate_assistant_plan` (which I just fixed).
-            
-            # Let's revert the plan to change `tool_executor.py` for now, and see if the `mx_server.py` fix resolves the issue.
-            # The user's error "model output must contain..." likely came from the main loop (`_generate_assistant_plan`).
-            
-            # So I will NOT change tool_executor.py yet.
-            pass
+            response_dict = response.to_dict()
+            try:
+                urls = [
+                    elem["url"]
+                    for elem in [
+                        x["content"][0]["annotations"]
+                        for x in response_dict["output"]
+                        if x["id"].startswith("msg")
+                    ][0]
+                ]
+                print(f"   Found {len(urls)} links.")
+                for url in urls:
+                    print(f"   - {url}")
+            except (KeyError, IndexError, TypeError):
+                urls = []
         except Exception as exc:  # noqa: BLE001
             print(f"web_search failed: {exc}")
         return query, urls

@@ -53,7 +53,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--max-results",
         type=int,
-        default=5,
+        default=3,
         help="Max links to return when executing the web_search tool.",
     )
     parser.add_argument(

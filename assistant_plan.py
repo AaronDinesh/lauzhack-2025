@@ -47,7 +47,7 @@ class Sam3Input(BaseModel):
 class WebSearchInput(BaseModel):
     query: str = Field(..., description="Natural-language search query.")
     max_results: int = Field(
-        5,
+        3,
         ge=1,
         le=10,
         description="Maximum number of links to return.",
