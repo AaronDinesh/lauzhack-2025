@@ -204,7 +204,7 @@ class ToolExecutor:
                 if url:
                     resources.append({"label": data.get("title") or url, "url": url})
         resources = [r for r in resources if r.get("url")]  # ensure url exists
-        resources = resources[:3]
+        resources = resources[:4]
         if not resources:
             return
         payload = {

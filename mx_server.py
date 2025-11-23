@@ -698,9 +698,9 @@ def _summarize_resources(resource_slots: Dict[str, Dict[str, Any]]) -> str:
     if not resource_slots:
         return ""
     parts: List[str] = []
-    for slot, cfg in resource_slots.items():
-        label = cfg.get("label", slot)
-        parts.append(f"{slot}: {label}")
+        for slot, cfg in resource_slots.items():
+            label = cfg.get("label", slot)
+            parts.append(f"{slot}: {label}")
     return "I've put resources on your keypad — " + "; ".join(parts) + "."
 
 
@@ -927,7 +927,7 @@ def update_resources(update: ResourceUpdate):
         return {"status": "ok", "updated": 0}
 
     new_slots: Dict[str, Dict[str, str]] = {}
-    for idx, item in enumerate(resources[:3], start=1):
+    for idx, item in enumerate(resources[:4], start=1):
         label = item.label.strip() or f"Resource {idx}"
         url = item.url.strip()
         if not url:

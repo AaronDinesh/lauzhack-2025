@@ -156,6 +156,29 @@ export class Resource3Action extends CommandAction {
   }
 }
 
+// Resource 4
+export class Resource4Action extends CommandAction {
+  name = 'jarvis_resource_4';
+  displayName = 'Resource 4';
+  description = 'Activate fourth resource';
+  groupName = 'Jarvis';
+
+  async onKeyDown(event) {
+    console.log('Jarvis: Resource 4 pressed');
+    const result = await sendToBackend({
+      device: 'keypad',
+      control: 'resource_4',
+      event: 'press',
+      action: 'resource_4',
+    });
+    console.log('Resource 4 result:', result);
+    if (result && result.url) {
+      console.log('Opening Resource 4 URL:', result.url);
+      openUrl(result.url);
+    }
+  }
+}
+
 // Dial: scroll components
 export class ScrollComponentAdjustment extends AdjustmentAction {
   name = 'jarvis_scroll_component';
