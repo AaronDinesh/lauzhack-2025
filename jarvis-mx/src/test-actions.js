@@ -156,11 +156,11 @@ export class Resource3Action extends CommandAction {
   }
 }
 
-// Resource 4 -> Segmentation toggle
+// Resource 4
 export class Resource4Action extends CommandAction {
   name = 'jarvis_resource_4';
   displayName = 'Resource 4';
-  description = 'Show or hide the segmentation overlay';
+  description = 'Activate fourth resource';
   groupName = 'Jarvis';
 
   async onKeyDown(event) {
@@ -172,8 +172,9 @@ export class Resource4Action extends CommandAction {
       action: 'resource_4',
     });
     console.log('Resource 4 result:', result);
-    if (result && result.error) {
-      console.error('Segmentation toggle failed:', result.error);
+    if (result && result.url) {
+      console.log('Opening Resource 4 URL:', result.url);
+      openUrl(result.url);
     }
   }
 }
