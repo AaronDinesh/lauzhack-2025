@@ -7,15 +7,16 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "export": "next build && next export",
-    "electron": "electron .",
+    "export": "next build",
+    "electron": "npm run export && electron .",
     "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:3000 && electron .\"",
-    "electron:build": "next build && electron-builder"
+    "electron:build": "npm run export && electron-builder"
   },
   "dependencies": {
     "next": "^14.0.4",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "zeromq": "^6.1.2"
   },
   "devDependencies": {
     "@types/node": "^20.10.6",

@@ -1,4 +1,18 @@
+# yolo training
+runs/
+yolo_pc_part/training_dataset
+*.pt
+
+# image formats
+*.png
+*.jpg
+*.jpeg
+
+# sam
+*.safetensors
+
 uv.lock
+<<<<<<< HEAD
 .python-version
 .DS_Store
 .idea/
@@ -13,6 +27,15 @@ coverage/
 *.tmp
 *.swp
 
+=======
+node_modules/
+# Keep Electron/Next workspace modules out of git
+ui/node_modules/
+.next/
+# Build outputs from UI/Electron
+ui/out/
+ui/dist-electron/
+>>>>>>> main
 # audio files
 *.mp3
 *.m4a

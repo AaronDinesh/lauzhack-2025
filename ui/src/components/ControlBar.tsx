@@ -1,36 +1,92 @@
 'use client';
 
-import { useState } from 'react';
+import { forwardRef, useEffect, useState } from 'react';
 
 interface ControlBarProps {
   connected: boolean;
   bridgeError: string | null;
   bridgeEndpoint: string;
+  backendUrl: string;
+  frameEndpoint: string;
   mockMode: boolean;
+  panelUrl: string;
+  panelVisible: boolean;
   onSetBridgeEndpoint: (endpoint: string) => void;
+  onSetBackendUrl: (url: string) => void;
+  onSetFrameEndpoint: (url: string) => void;
   onToggleMockMode: () => void;
   onMockSetUrl: () => void;
+  onPanelUrlChange: (url: string) => void;
+  onTogglePanel: (url?: string) => void;
+  onSearchPanel: (url: string) => void;
+  onSettingsVisibilityChange: (open: boolean) => void;
 }
 
-export default function ControlBar({
+const ControlBar = forwardRef<HTMLDivElement, ControlBarProps>(function ControlBar(
+{
   connected,
   bridgeError,
   bridgeEndpoint,
+  backendUrl,
+  frameEndpoint,
   mockMode,
+  panelUrl,
+  panelVisible,
   onSetBridgeEndpoint,
+  onSetBackendUrl,
+  onSetFrameEndpoint,
   onToggleMockMode,
   onMockSetUrl,
-}: ControlBarProps) {
+  onPanelUrlChange,
+  onTogglePanel,
+  onSearchPanel,
+  onSettingsVisibilityChange,
+},
+ref) {
   const [showSettings, setShowSettings] = useState(false);
   const [endpointInput, setEndpointInput] = useState(bridgeEndpoint);
+  const [backendUrlInput, setBackendUrlInput] = useState(backendUrl);
+  const [frameEndpointInput, setFrameEndpointInput] = useState(frameEndpoint);
+  const [panelUrlInput, setPanelUrlInput] = useState(panelUrl);
+
+  useEffect(() => {
+    setEndpointInput(bridgeEndpoint);
+  }, [bridgeEndpoint]);
+
+  useEffect(() => {
+    setBackendUrlInput(backendUrl);
+  }, [backendUrl]);
+
+  useEffect(() => {
+    setFrameEndpointInput(frameEndpoint);
+  }, [frameEndpoint]);
+
+  useEffect(() => {
+    setPanelUrlInput(panelUrl);
+  }, [panelUrl]);
 
   const handleSaveEndpoint = () => {
     onSetBridgeEndpoint(endpointInput);
+    onSetBackendUrl(backendUrlInput);
+    onSetFrameEndpoint(frameEndpointInput);
+    if (typeof window !== 'undefined' && window.electronAPI?.setFrameEndpoint) {
+      window.electronAPI.setFrameEndpoint(frameEndpointInput);
+    }
     setShowSettings(false);
+    onSettingsVisibilityChange(false);
+  };
+
+  const toggleSettings = () => {
+    const next = !showSettings;
+    setShowSettings(next);
+    onSettingsVisibilityChange(next);
   };
 
   return (
-    <div className="flex items-center gap-4 px-6 py-3 bg-dark border-b border-gray-800">
+    <div
+      ref={ref}
+      className="flex flex-wrap items-center gap-4 px-6 py-3 bg-dark border-b border-gray-800"
+    >
       {/* App Title */}
       <div className="flex items-center gap-2">
         <span className="text-xl">🔧</span>
@@ -65,10 +121,39 @@ export default function ControlBar({
         </>
       )}
 
+      {/* Panel Controls */}
+      <div className="flex items-center gap-2 ml-auto bg-gray-800/60 border border-gray-700 rounded-lg px-3 py-2">
+        <input
+          type="text"
+          value={panelUrlInput}
+          onChange={(e) => setPanelUrlInput(e.target.value)}
+          placeholder="https://example.com"
+          className="w-64 px-3 py-1 bg-gray-900 border border-gray-700 rounded focus:outline-none focus:ring-2 focus:ring-primary text-sm"
+        />
+        <button
+          onClick={() => {
+            onPanelUrlChange(panelUrlInput);
+            onSearchPanel(panelUrlInput);
+          }}
+          className="px-3 py-1 text-sm bg-gray-700 hover:bg-gray-600 rounded transition-colors"
+        >
+          Search
+        </button>
+        <button
+          onClick={() => {
+            onPanelUrlChange(panelUrlInput);
+            onTogglePanel(panelUrlInput);
+          }}
+          className="px-3 py-1 text-sm bg-blue-700 hover:bg-blue-600 rounded transition-colors"
+        >
+          {panelVisible ? 'Hide Panel' : 'Show Panel'}
+        </button>
+      </div>
+
       {/* Settings Button */}
       <button
-        onClick={() => setShowSettings(!showSettings)}
-        className="ml-auto px-3 py-1 text-sm bg-gray-700 hover:bg-gray-600 rounded transition-colors"
+        onClick={toggleSettings}
+        className="px-3 py-1 text-sm bg-gray-700 hover:bg-gray-600 rounded transition-colors"
         title="Settings"
       >
         ⚙️ Settings
@@ -76,21 +161,49 @@ export default function ControlBar({
 
       {/* Settings Modal */}
       {showSettings && (
-        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[9999]">
           <div className="bg-dark border border-gray-700 rounded-lg p-6 max-w-md w-full mx-4">
             <h2 className="text-xl font-bold mb-4">Settings</h2>
 
             {/* Bridge Endpoint */}
             <div className="mb-4">
               <label className="block text-sm font-medium mb-2">
-                MX Bridge Endpoint (SSE)
+                MX Bridge Endpoint (SSE, optional)
               </label>
               <input
                 type="text"
                 value={endpointInput}
                 onChange={(e) => setEndpointInput(e.target.value)}
                 className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded focus:outline-none focus:ring-2 focus:ring-primary"
-                placeholder="http://127.0.0.1:8000/stream"
+                placeholder="SSE endpoint (leave blank to disable)"
+              />
+            </div>
+
+            {/* Backend Base URL */}
+            <div className="mb-4">
+              <label className="block text-sm font-medium mb-2">
+                MX Backend URL (HTTP API)
+              </label>
+              <input
+                type="text"
+                value={backendUrlInput}
+                onChange={(e) => setBackendUrlInput(e.target.value)}
+                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded focus:outline-none focus:ring-2 focus:ring-primary"
+                placeholder="http://127.0.0.1:8000"
+              />
+            </div>
+
+            {/* Frame Endpoint */}
+            <div className="mb-4">
+              <label className="block text-sm font-medium mb-2">
+                Frame Push Endpoint (ZeroMQ)
+              </label>
+              <input
+                type="text"
+                value={frameEndpointInput}
+                onChange={(e) => setFrameEndpointInput(e.target.value)}
+                className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded focus:outline-none focus:ring-2 focus:ring-primary"
+                placeholder="tcp://127.0.0.1:5557"
               />
             </div>
 
@@ -119,6 +232,7 @@ export default function ControlBar({
                 onClick={() => {
                   setEndpointInput(bridgeEndpoint);
                   setShowSettings(false);
+                  onSettingsVisibilityChange(false);
                 }}
                 className="flex-1 btn btn-secondary"
               >
@@ -130,5 +244,6 @@ export default function ControlBar({
       )}
     </div>
   );
-}
+});
 
+export default ControlBar;

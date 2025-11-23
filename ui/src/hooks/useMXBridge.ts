@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 export interface MXAction {
   type: 'setUrl' | 'togglePanel' | 'triggerStep' | 'setLayout' | 'setMockMode' | 'setBridgeEndpoint';
@@ -14,7 +14,7 @@ interface MXBridgeCallbacks {
   onSetBridgeEndpoint?: (endpoint: string) => void;
 }
 
-export function useMXBridge(endpoint: string, callbacks: MXBridgeCallbacks) {
+export function useMXBridge(endpoint: string | undefined, callbacks: MXBridgeCallbacks) {
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -24,7 +24,11 @@ export function useMXBridge(endpoint: string, callbacks: MXBridgeCallbacks) {
     let isMounted = true;
 
     function connectSSE() {
-      if (!endpoint || !isMounted) return;
+      if (!endpoint || !endpoint.trim() || !isMounted) {
+        setConnected(false);
+        setError(null);
+        return;
+      }
 
       try {
         const es = new EventSource(endpoint);
@@ -45,7 +49,6 @@ export function useMXBridge(endpoint: string, callbacks: MXBridgeCallbacks) {
             setError('Connection failed');
             es.close();
 
-            // Attempt to reconnect after 5 seconds
             reconnectTimeoutRef.current = setTimeout(() => {
               if (isMounted) {
                 console.log('[MX Bridge] Attempting to reconnect...');
@@ -123,4 +126,3 @@ export function useMXBridge(endpoint: string, callbacks: MXBridgeCallbacks) {
 
   return { connected, error };
 }
-
