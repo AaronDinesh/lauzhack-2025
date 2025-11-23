@@ -2,6 +2,7 @@ import json
 import os
 import sys
 import threading
+import asyncio
 from pathlib import Path
 from time import perf_counter, time as current_time
 from typing import Optional, Dict, Any, List
@@ -9,6 +10,7 @@ from typing import Optional, Dict, Any, List
 from dotenv import load_dotenv
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from openai import OpenAI
 import zmq
@@ -55,6 +57,7 @@ state: Dict[str, Any] = {
     "talk_recording_active": False,
     "last_transcript": None,
     "last_response": None,
+    "workspace_split": 70,  # percentage allocated to camera
     "last_plan": None,
     "tools_active": False,
     "active_tools": [],
@@ -97,6 +100,7 @@ _ui_frame: Dict[str, Any] = {"data": None, "ts": 0.0}
 _zmq_context: Optional[zmq.Context] = None
 _zmq_thread: Optional[threading.Thread] = None
 _zmq_stop = threading.Event()
+_sse_subscribers: List[asyncio.Queue] = []
 
 
 def _extract_first_text(response_dict: Dict[str, Any]) -> str:
@@ -222,6 +226,22 @@ def _frame_listener() -> None:
     finally:
         poller.unregister(socket)
         socket.close()
+
+
+def broadcast_event(event: Dict[str, Any]) -> None:
+    if not _sse_subscribers:
+        return
+    message = json.dumps(event)
+    for queue in list(_sse_subscribers):
+        try:
+            queue.put_nowait(message)
+        except asyncio.QueueFull:
+            pass
+        except Exception:
+            try:
+                _sse_subscribers.remove(queue)
+            except ValueError:
+                pass
 
 
 def fetch_frame_with_context(user_text: str) -> tuple[list[dict], Path]:
@@ -789,11 +809,26 @@ def handle_console_action(action: ConsoleAction):
 
     elif action.action == "scroll_component":
         # dial rotation - your UI can use this later to move selection
-        return {
+        response = {
             "status": "ok",
             "mode": state["mode"],
             "note": f"scroll tick={action.value}",
         }
+        broadcast_event({"type": "scroll_component", "payload": {"value": action.value}})
+        return response
+
+    elif action.action == "resize_panel":
+        delta = action.value or 0
+        current = float(state.get("workspace_split", 70))
+        new_value = int(min(max(current + delta * 1, 30), 85))
+        state["workspace_split"] = new_value
+        response = {
+            "status": "ok",
+            "mode": state["mode"],
+            "workspace_split": new_value,
+        }
+        broadcast_event({"type": "setLayout", "payload": {"workspaceSplit": new_value}})
+        return response
 
     # Fallback
     return {"status": "ok", "mode": state["mode"]}
@@ -810,11 +845,30 @@ def get_status():
         "listening": state.get("talk_recording_active", False),
         "last_transcript": state.get("last_transcript"),
         "last_response": state.get("last_response"),
+        "workspace_split": state.get("workspace_split", 70),
         "last_plan": state.get("last_plan"),
         "tools_active": state.get("tools_active", False),
         "active_tools": state.get("active_tools", []),
         "last_tool_status": state.get("last_tool_status"),
     }
+
+
+@app.get("/stream")
+async def stream_events():
+    queue: asyncio.Queue = asyncio.Queue()
+    await queue.put(json.dumps({"type": "setLayout", "payload": {"workspaceSplit": state.get("workspace_split", 70)}}))
+    _sse_subscribers.append(queue)
+
+    async def event_generator():
+        try:
+            while True:
+                data = await queue.get()
+                yield f"data: {data}\n\n"
+        finally:
+            if queue in _sse_subscribers:
+                _sse_subscribers.remove(queue)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @app.get("/frame")
