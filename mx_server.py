@@ -23,6 +23,12 @@ from camera.helpers import (
     save_frame_to_logs,
     build_image_content,
 )
+from assistant_plan import (
+    AssistantPlan,
+    build_system_prompt,
+    parse_assistant_plan_response,
+)
+from tool_executor import ToolExecutor
 
 load_dotenv()
 
@@ -58,10 +64,9 @@ MODEL_NAME = os.getenv("JARVIS_RESPONSES_MODEL", "gpt-5-nano")
 VOICE_PRESET = os.getenv("OPENAI_TTS_VOICE", "alloy")
 TTS_MODEL = os.getenv("OPENAI_TTS_MODEL", "gpt-4o-mini-tts")
 REASONING_EFFORT = os.getenv("JARVIS_REASONING_EFFORT", "minimal")
-SYSTEM_PROMPT = os.getenv(
-    "JARVIS_SYSTEM_PROMPT",
-    "You are a friendly assistant that describes what you see and converses naturally.",
-)
+MAX_WEB_RESULTS = int(os.getenv("JARVIS_WEB_RESULTS", "5"))
+IFIXIT_LIMIT = int(os.getenv("JARVIS_IFIXIT_LIMIT", "3"))
+SYSTEM_PROMPT = os.getenv("JARVIS_SYSTEM_PROMPT") or build_system_prompt()
 EXIT_PHRASES = {
     phrase.strip().lower()
     for phrase in os.getenv("JARVIS_EXIT_PHRASES", "quit,exit,goodbye").split(",")
@@ -91,6 +96,7 @@ _ui_frame: Dict[str, Any] = {"data": None, "ts": 0.0}
 _zmq_context: Optional[zmq.Context] = None
 _zmq_thread: Optional[threading.Thread] = None
 _zmq_stop = threading.Event()
+tool_executor: ToolExecutor | None = None
 
 
 def _extract_first_text(response_dict: Dict[str, Any]) -> str:
@@ -174,44 +180,19 @@ def fetch_frame_with_context(user_text: str) -> tuple[list[dict], Path]:
     return content, saved_path
 
 
-def _stream_assistant_text(
+def _generate_assistant_plan(
     conversation_history: List[Dict[str, Any]],
-) -> str:
+) -> AssistantPlan:
     request_kwargs: Dict[str, Any] = {
         "model": MODEL_NAME,
         "input": conversation_history,
+        "text_format": AssistantPlan,
     }
     if REASONING_EFFORT:
         request_kwargs["reasoning"] = {"effort": REASONING_EFFORT}
 
-    text_chunks: List[str] = []
-    final_response: Any | None = None
-
-    with client.responses.stream(**request_kwargs) as stream:
-        for event in stream:
-            if event.type == "response.output_text.delta":
-                text_chunks.append(event.delta)
-            elif event.type == "response.error":
-                error = getattr(event, "error", None)
-                message = "OpenAI streaming error"
-                if isinstance(error, dict):
-                    message = error.get("message") or message
-                raise RuntimeError(message)
-
-        final_response = stream.get_final_response()
-
-    assistant_text = "".join(text_chunks).strip()
-    if assistant_text:
-        return assistant_text
-
-    response_dict: Dict[str, Any] = {}
-    if final_response is not None:
-        if hasattr(final_response, "model_dump"):
-            response_dict = final_response.model_dump()  # type: ignore[assignment]
-        elif hasattr(final_response, "to_dict"):
-            response_dict = final_response.to_dict()  # type: ignore[assignment]
-
-    return _extract_first_text(response_dict)
+    response = client.responses.parse(**request_kwargs)
+    return parse_assistant_plan_response(response)
 
 
 def _play_response_async(text: str) -> None:
@@ -240,6 +221,18 @@ def _play_response_async(text: str) -> None:
     with _tts_thread_lock:
         _active_tts_thread = thread
     thread.start()
+
+
+def _dispatch_tool_calls(plan: AssistantPlan) -> None:
+    if not plan.tool_calls:
+        return
+    if tool_executor is None:
+        print("[ToolExecutor] unavailable; skipping tool calls", file=sys.stderr)
+        return
+    try:
+        tool_executor.submit(plan)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[ToolExecutor] submit failed: {exc}", file=sys.stderr)
 
 
 def _process_recording(audio_path: Path) -> Dict[str, Any]:
@@ -278,16 +271,17 @@ def _process_recording(audio_path: Path) -> Dict[str, Any]:
     conversation.append({"role": "user", "content": content})
 
     try:
-        assistant_text = _stream_assistant_text(conversation)
-        step_start = _log_step_duration("responses.stream", step_start)
+        plan = _generate_assistant_plan(conversation)
+        step_start = _log_step_duration("responses.parse", step_start)
     except Exception as exc:
         conversation.pop()  # remove the failed user turn
         return {
             "status": "error",
-            "error": f"Assistant streaming failed: {exc}",
+            "error": f"Assistant planning failed: {exc}",
             "transcript": transcript,
         }
 
+    assistant_text = (plan.voice or "").strip()
     if not assistant_text:
         return {
             "status": "error",
@@ -303,6 +297,9 @@ def _process_recording(audio_path: Path) -> Dict[str, Any]:
         }
     )
 
+    _dispatch_tool_calls(plan)
+    plan_payload = plan.model_dump()
+
     tts_error = None
     try:
         _play_response_async(assistant_text)
@@ -317,6 +314,8 @@ def _process_recording(audio_path: Path) -> Dict[str, Any]:
         "transcript": transcript,
         "assistant_text": assistant_text,
         "screenshot_path": screenshot_path,
+        "assistant_plan": plan_payload,
+        "tool_calls": plan_payload.get("tool_calls", []),
     }
     if tts_error:
         result["tts_error"] = tts_error
@@ -370,7 +369,7 @@ def recording_status() -> Dict[str, Any]:
 
 @app.on_event("startup")
 def _startup() -> None:
-    global frame_cache, _zmq_thread
+    global frame_cache, _zmq_thread, tool_executor
     if USE_FRAME_CACHE:
         try:
             frame_cache = FrameCache(camera_index=CAMERA_INDEX, refresh_interval=0.2)
@@ -388,9 +387,20 @@ def _startup() -> None:
         _zmq_thread = threading.Thread(target=_frame_listener, name="ui-frame-listener", daemon=True)
         _zmq_thread.start()
 
+    if tool_executor is None:
+        try:
+            tool_executor = ToolExecutor(
+                model=MODEL_NAME,
+                max_web_results=MAX_WEB_RESULTS,
+                ifixit_limit=IFIXIT_LIMIT,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"[Startup] ToolExecutor unavailable: {exc}", file=sys.stderr)
+
 
 @app.on_event("shutdown")
 def _shutdown() -> None:
+    global tool_executor
     if frame_cache:
         frame_cache.stop()
     _zmq_stop.set()
@@ -401,6 +411,9 @@ def _shutdown() -> None:
             _zmq_context.term()
         except Exception:
             pass
+    if tool_executor:
+        tool_executor.shutdown()
+        tool_executor = None
 
 
 # Fake "VLM" / LLM pipeline
